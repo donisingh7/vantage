@@ -52,18 +52,27 @@ class DocumentIndexingService:
         )
         return int((await self.session.execute(statement)).scalar_one())
 
+    def is_current(self, document: Document) -> bool:
+        """True iff `document`'s persisted chunks match both its current content AND the
+        embedding provider/config configured on this service instance. The single
+        definition of "currently indexed", shared by the skip check, the pending query,
+        and read-only callers (e.g. the documents list endpoint) so they can't drift apart.
+        """
+        return (
+            document.content_hash is not None
+            and document.indexed_content_hash == document.content_hash
+            and document.indexed_embedding_fingerprint == self.embeddings.fingerprint()
+        )
+
     async def index_document(self, document_id: UUID, *, force: bool = False) -> IndexResult:
         async with _indexing_guard.acquire(document_id):
             return await self._index_document(document_id, force=force)
 
     async def _index_document(self, document_id: UUID, *, force: bool) -> IndexResult:
         document = await self._get_document(document_id)
+        fingerprint = self.embeddings.fingerprint()
 
-        already_current = (
-            document.content_hash is not None
-            and document.indexed_content_hash == document.content_hash
-        )
-        if already_current and not force:
+        if self.is_current(document) and not force:
             return IndexResult(
                 document_id=document.id,
                 chunks_created=0,
@@ -92,6 +101,7 @@ class DocumentIndexingService:
             )
 
         document.indexed_content_hash = document.content_hash
+        document.indexed_embedding_fingerprint = fingerprint
         await self.session.commit()
         return IndexResult(document_id=document.id, chunks_created=len(pieces), total_chunks=len(pieces), skipped=False)
 
@@ -102,11 +112,15 @@ class DocumentIndexingService:
         return [await self.index_document(document_id) for document_id in pending_ids]
 
     async def _pending_document_ids(self, limit: int) -> list[UUID]:
+        fingerprint = self.embeddings.fingerprint()
         statement = (
             select(Document.id)
             .where(
                 Document.workspace_id == self.workspace_id,
-                (Document.indexed_content_hash.is_(None)) | (Document.indexed_content_hash != Document.content_hash),
+                (Document.indexed_content_hash.is_(None))
+                | (Document.indexed_content_hash != Document.content_hash)
+                | (Document.indexed_embedding_fingerprint.is_(None))
+                | (Document.indexed_embedding_fingerprint != fingerprint),
             )
             .order_by(Document.fetched_at.desc())
             .limit(limit)

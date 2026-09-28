@@ -10,6 +10,16 @@ class EmbeddingProvider(Protocol):
 
     def embed_documents(self, documents: list[str]) -> list[list[float]]: ...
 
+    def fingerprint(self) -> str:
+        """Stable identifier for the provider + config that produces its vectors.
+
+        Two calls return the same value iff embeddings from each are comparable
+        (same provider, same model/deployment, same dimensionality). Used to decide
+        whether a document's persisted index is still current after a provider or
+        embedding-config change, not just after a content change.
+        """
+        ...
+
 
 class AzureOpenAIEmbeddingProvider:
     """Real EmbeddingProvider backed by Azure OpenAI embeddings.
@@ -45,6 +55,10 @@ class AzureOpenAIEmbeddingProvider:
             raise ProviderError(f"Azure OpenAI embedding request failed ({type(exc).__name__})") from exc
         return [item.embedding for item in response.data]
 
+    def fingerprint(self) -> str:
+        dims = str(self._dimensions) if self._dimensions else "native"
+        return f"azure_openai:{self._deployment}:dims={dims}"
+
 
 class MockEmbeddingProvider:
     def __init__(self, dimensions: int = 32) -> None:
@@ -62,3 +76,6 @@ class MockEmbeddingProvider:
 
     def embed_documents(self, documents: list[str]) -> list[list[float]]:
         return [self.embed_text(document) for document in documents]
+
+    def fingerprint(self) -> str:
+        return f"mock:dims={self.dimensions}"
