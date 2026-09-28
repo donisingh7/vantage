@@ -1,11 +1,11 @@
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import Settings
-from app.models import Company, MemberRole, Source, SourceType, Topic, User, Watchlist, Workspace
+from app.models import Company, User, Workspace
 from app.providers.embeddings import MockEmbeddingProvider
 from app.providers.llm import MockLLMProvider
 

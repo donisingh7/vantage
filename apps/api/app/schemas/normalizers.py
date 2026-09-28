@@ -13,8 +13,7 @@ def normalize_domain(value: str | None) -> str | None:
     if "//" in candidate:
         candidate = urlsplit(candidate).netloc or candidate
     candidate = candidate.split("/")[0].split("@")[-1].split(":")[0]
-    if candidate.startswith("www."):
-        candidate = candidate[4:]
+    candidate = candidate.removeprefix("www.")
     candidate = candidate.strip(".")
     if not candidate or "." not in candidate or " " in candidate:
         raise ValueError("Enter a valid domain, for example example.com")

@@ -59,7 +59,7 @@ def _is_skippable(url: str) -> bool:
 def _host_of(url: str) -> str:
     host = urlsplit(url).hostname or ""
     host = host.lower()
-    return host[4:] if host.startswith("www.") else host
+    return host.removeprefix("www.")
 
 
 def discover_links(html: str, base_url: str, *, limit: int = 10, same_domain: bool = True) -> list[str]:

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 from enum import Enum
 from types import UnionType
@@ -6,6 +7,8 @@ from typing import Any, Literal, Protocol, Union, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
+
+from app.core.exceptions import ProviderError
 
 # A real provider (e.g. Azure OpenAI) implements this same Protocol; nothing else
 # in this module or its callers needs to change for that to plug in later.
@@ -15,6 +18,56 @@ class LLMProvider(Protocol):
     async def generate(self, prompt: str, *, system: str | None = None) -> str: ...
 
     async def structured_generate(self, prompt: str, schema: type[Any], *, system: str | None = None) -> Any: ...
+
+
+class AzureOpenAILLMProvider:
+    """Real LLMProvider backed by Azure OpenAI chat completions.
+
+    Structured output is requested via JSON-mode plus an inline JSON Schema in the
+    system prompt (broadly compatible across Azure OpenAI API versions/deployments),
+    then validated locally with the caller's Pydantic schema before use.
+    """
+
+    def __init__(self, *, endpoint: str, api_key: str, api_version: str, chat_deployment: str) -> None:
+        from openai import AsyncAzureOpenAI
+
+        self._client = AsyncAzureOpenAI(azure_endpoint=endpoint, api_key=api_key, api_version=api_version)
+        self._deployment = chat_deployment
+
+    async def generate(self, prompt: str, *, system: str | None = None) -> str:
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        response = await self._request(messages=messages)
+        return (response.choices[0].message.content or "").strip()
+
+    async def structured_generate(self, prompt: str, schema: type[Any], *, system: str | None = None) -> Any:
+        schema_json = schema.model_json_schema() if issubclass(schema, BaseModel) else {}
+        instructions = (
+            f"{system}\n\n" if system else ""
+        ) + (
+            "Respond with ONLY a single valid JSON object matching this JSON Schema. "
+            "No prose, no markdown code fences.\n"
+            f"JSON Schema: {json.dumps(schema_json)}"
+        )
+        messages = [{"role": "system", "content": instructions}, {"role": "user", "content": prompt}]
+        response = await self._request(messages=messages, response_format={"type": "json_object"})
+        content = response.choices[0].message.content or "{}"
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ProviderError("Azure OpenAI returned a response that was not valid JSON") from exc
+        return schema.model_validate(parsed)
+
+    async def _request(self, **kwargs: Any) -> Any:
+        from openai import OpenAIError
+
+        try:
+            return await self._client.chat.completions.create(model=self._deployment, **kwargs)
+        except OpenAIError as exc:
+            # Never surface the raw SDK exception: it can echo request details back to the client.
+            raise ProviderError(f"Azure OpenAI request failed ({type(exc).__name__})") from exc
 
 
 # Field names of the document-analysis structured-output contract (see

@@ -18,3 +18,10 @@ class NotFoundError(AppError):
 class ConflictError(AppError):
     status_code = 409
     code = "conflict"
+
+
+class ProviderError(AppError):
+    """A configured real provider (LLM/embedding) failed. Message must never include credentials."""
+
+    status_code = 502
+    code = "provider_error"

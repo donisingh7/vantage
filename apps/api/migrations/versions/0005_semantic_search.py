@@ -4,8 +4,8 @@ Revision ID: 0005_semantic
 Revises: 0004_intelligence
 Create Date: 2026-09-28
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0005_semantic"
 down_revision = "0004_intelligence"

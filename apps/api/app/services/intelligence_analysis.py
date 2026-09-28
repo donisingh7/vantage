@@ -15,9 +15,12 @@ from app.models import AnalysisStatus, Company, Document, IntelligenceSignal, So
 from app.providers.llm import LLMProvider
 from app.services.analysis_prompts import ANALYSIS_SYSTEM_PROMPT, build_analysis_prompt
 from app.services.analysis_schema import DocumentAnalysisResult
+from app.services.concurrency import InProcessKeyGuard
 
 MAX_ANALYZE_PENDING_LIMIT = 25
 ERROR_MESSAGE_LIMIT = 1500
+
+_analysis_guard = InProcessKeyGuard(conflict_message="Analysis is already running for this document")
 
 
 class IntelligenceAnalysisService:
@@ -40,6 +43,10 @@ class IntelligenceAnalysisService:
         return (await self.session.execute(statement)).scalar_one_or_none()
 
     async def analyze_document(self, document_id: UUID, *, force: bool = False) -> IntelligenceSignal:
+        async with _analysis_guard.acquire(document_id):
+            return await self._analyze_document(document_id, force=force)
+
+    async def _analyze_document(self, document_id: UUID, *, force: bool) -> IntelligenceSignal:
         document = await self._get_document(document_id)
         existing = await self._find_existing(document_id)
         if existing is not None and not force:
@@ -65,7 +72,7 @@ class IntelligenceAnalysisService:
                 if isinstance(raw_result, DocumentAnalysisResult)
                 else DocumentAnalysisResult.model_validate(raw_result)
             )
-        except Exception as exc:  # noqa: BLE001 - any provider/validation failure is recorded, never raised
+        except Exception as exc:
             return await self._persist_failed(document, existing, str(exc))
 
         return await self._persist_result(document, existing, result)

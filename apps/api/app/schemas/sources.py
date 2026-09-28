@@ -5,6 +5,7 @@ from pydantic import AnyHttpUrl, BaseModel, Field, field_validator
 from app.models import IngestionInterval, SourceType
 from app.schemas.common import EntityBase
 from app.schemas.normalizers import normalize_text
+from app.services.url_safety import UnsafeUrlError, ensure_safe_url
 
 SourceName = Annotated[str, Field(min_length=1, max_length=200)]
 
@@ -31,6 +32,15 @@ class SourceCreate(BaseModel):
             raise ValueError("Source URL cannot contain credentials")
         return value
 
+    @field_validator("url")
+    @classmethod
+    def reject_unsafe_host(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        try:
+            ensure_safe_url(str(value))
+        except UnsafeUrlError as exc:
+            raise ValueError(str(exc)) from exc
+        return value
+
 
 class SourceUpdate(BaseModel):
     name: SourceName | None = None
@@ -54,6 +64,17 @@ class SourceUpdate(BaseModel):
     def reject_embedded_credentials(cls, value: AnyHttpUrl | None) -> AnyHttpUrl | None:
         if value and (value.username or value.password):
             raise ValueError("Source URL cannot contain credentials")
+        return value
+
+    @field_validator("url")
+    @classmethod
+    def reject_unsafe_host(cls, value: AnyHttpUrl | None) -> AnyHttpUrl | None:
+        if value is None:
+            return value
+        try:
+            ensure_safe_url(str(value))
+        except UnsafeUrlError as exc:
+            raise ValueError(str(exc)) from exc
         return value
 
 

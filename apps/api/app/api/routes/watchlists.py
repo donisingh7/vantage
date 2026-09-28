@@ -33,9 +33,15 @@ async def _detail(
 
 @router.get("", response_model=ListResponse[WatchlistRead])
 async def list_watchlists(
-    service: WatchlistServiceDep, search: str | None = Query(default=None, max_length=200)
+    service: WatchlistServiceDep,
+    search: str | None = Query(default=None, max_length=200),
+    company_id: UUID | None = Query(default=None),
+    topic_id: UUID | None = Query(default=None),
 ) -> ListResponse[WatchlistRead]:
-    watchlists = await service.list(search)
+    if company_id is not None or topic_id is not None:
+        watchlists = await service.list_containing(company_id=company_id, topic_id=topic_id)
+    else:
+        watchlists = await service.list(search)
     items = [to_watchlist_read(watchlist) for watchlist in watchlists]
     return ListResponse(items=items, total=len(items))
 

@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+from typing import ClassVar
 
 import feedparser
 
@@ -23,7 +24,7 @@ class ExtractedFeedEntry:
 
 
 class _HTMLTextExtractor(HTMLParser):
-    _SKIP_TAGS = {"script", "style", "noscript", "template"}
+    _SKIP_TAGS: ClassVar[set[str]] = {"script", "style", "noscript", "template"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

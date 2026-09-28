@@ -6,8 +6,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import NotFoundError
 from app.models import CrawlJob, CrawlJobStatus, Document, Source, SourceType
+from app.services.concurrency import InProcessKeyGuard
 from app.services.fetching import FetchedRecord, FetchError, SourceFetcher
 from app.services.link_discovery import discover_links
 from app.services.url_normalization import InvalidUrlError, normalize_url
@@ -15,9 +16,7 @@ from app.services.url_safety import UnsafeUrlError, ensure_safe_url
 
 ERROR_MESSAGE_LIMIT = 2000
 
-# In-process guard against overlapping ingestion runs for the same source.
-# This is intentionally not a distributed lock: scheduling here is single-process.
-_running_source_ids: set[UUID] = set()
+_ingestion_guard = InProcessKeyGuard(conflict_message="Ingestion is already running for this source")
 
 
 class IngestionService:
@@ -41,13 +40,8 @@ class IngestionService:
         return source
 
     async def run(self, source_id: UUID) -> CrawlJob:
-        if source_id in _running_source_ids:
-            raise ConflictError("Ingestion is already running for this source")
-        _running_source_ids.add(source_id)
-        try:
+        async with _ingestion_guard.acquire(source_id):
             return await self._run(source_id)
-        finally:
-            _running_source_ids.discard(source_id)
 
     async def _run(self, source_id: UUID) -> CrawlJob:
         source = await self._get_source(source_id)
