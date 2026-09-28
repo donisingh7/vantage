@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.core.exceptions import ConflictError
-from app.models import CrawlJob, CrawlJobStatus, IngestionInterval, Source, SourceType
+from app.models import CrawlJob, IngestionInterval, Source, SourceType
 from app.services.fetching import FetchedRecord, FetchError, HttpxSourceFetcher, WebsitePage
 from app.services.ingestion import IngestionService
 from app.services.link_discovery import discover_links

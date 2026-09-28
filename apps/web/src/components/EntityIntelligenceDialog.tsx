@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ExternalLink, MessageSquareText, X } from "lucide-react";
 import {
   ApiError, documentsApi, intelligenceApi, sourcesApi, watchlistsApi,
-  type Company, type Document, type IntelligenceSignal, type Source, type Topic, type Watchlist, type WatchlistDetail,
+  type Company, type Document, type IntelligenceSignal, type Source, type Topic, type Watchlist,
 } from "@/lib/api";
 
 const SIGNAL_TYPE_LABELS: Record<string, string> = {
@@ -37,20 +37,15 @@ export function EntityIntelligenceDialog({
     setLoading(true);
     const filterParam = kind === "company" ? { company_id: entity.id } : { topic_id: entity.id };
 
-    Promise.all([intelligenceApi.listSignals(filterParam), watchlistsApi.list(), sourcesApi.list(), documentsApi.list()])
-      .then(async ([signalResult, watchlistList, sourceList, documentList]) => {
+    Promise.all([
+      intelligenceApi.listSignals(filterParam), watchlistsApi.listContaining(filterParam), sourcesApi.list(), documentsApi.list(),
+    ])
+      .then(([signalResult, watchlistResult, sourceList, documentList]) => {
         if (!active) return;
         setSignals(signalResult.items);
+        setWatchlists(watchlistResult.items);
         setSourcesById(Object.fromEntries(sourceList.items.map((source) => [source.id, source])));
         setDocumentsById(Object.fromEntries(documentList.items.map((document) => [document.id, document])));
-
-        const details = await Promise.all(watchlistList.items.map((item) => watchlistsApi.get(item.id).catch(() => null)));
-        const containing = details.filter((detail): detail is WatchlistDetail => {
-          if (!detail) return false;
-          const members = kind === "company" ? detail.companies : detail.topics;
-          return members.some((member) => member.id === entity.id);
-        });
-        if (active) setWatchlists(containing);
         setError("");
       })
       .catch((cause) => active && setError(cause instanceof ApiError ? cause.message : "Could not load intelligence."))

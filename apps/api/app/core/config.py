@@ -23,8 +23,10 @@ class Settings(BaseSettings):
     embedding_provider: Literal["mock", "azure_openai"] = "mock"
     azure_openai_endpoint: AnyHttpUrl | None = None
     azure_openai_api_key: str | None = Field(default=None, repr=False)
+    azure_openai_api_version: str = "2024-08-01-preview"
     azure_openai_chat_deployment: str | None = None
     azure_openai_embedding_deployment: str | None = None
+    azure_openai_embedding_dimensions: int | None = Field(default=None, ge=8, le=3072)
     embedding_dimensions: int = Field(default=32, ge=8, le=3072)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     frontend_url: AnyHttpUrl = "http://localhost:3000"

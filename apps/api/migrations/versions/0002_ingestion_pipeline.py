@@ -4,8 +4,8 @@ Revision ID: 0002_ingestion
 Revises: 0001_initial
 Create Date: 2026-09-27
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0002_ingestion"
 down_revision = "0001_initial"

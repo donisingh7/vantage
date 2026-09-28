@@ -4,8 +4,8 @@ Revision ID: 0004_intelligence
 Revises: 0003_crawling
 Create Date: 2026-09-27
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0004_intelligence"
 down_revision = "0003_crawling"

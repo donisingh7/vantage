@@ -23,6 +23,11 @@ INGESTION_INTERVAL_MINUTES: dict[IngestionInterval, int | None] = {
 }
 
 
+def should_enable_scheduler(*, enable_scheduler: bool, app_env: str) -> bool:
+    """Explicit, unit-testable gate: the scheduler never runs in test mode, even if misconfigured."""
+    return enable_scheduler and app_env != "test"
+
+
 def is_due(source: Source, last_job: CrawlJob | None, *, now: datetime) -> bool:
     """Pure scheduling decision, independent of any timer, so it is easy to unit test."""
     minutes = INGESTION_INTERVAL_MINUTES.get(source.ingestion_interval)

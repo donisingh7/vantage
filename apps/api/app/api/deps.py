@@ -6,8 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import CurrentUser, get_current_user
 from app.core.config import Settings, get_settings
 from app.db.session import get_db_session
-from app.providers.embeddings import EmbeddingProvider, MockEmbeddingProvider
-from app.providers.llm import LLMProvider, MockLLMProvider
+from app.providers.embeddings import (
+    AzureOpenAIEmbeddingProvider,
+    EmbeddingProvider,
+    MockEmbeddingProvider,
+)
+from app.providers.llm import AzureOpenAILLMProvider, LLMProvider, MockLLMProvider
 from app.services.ask_vantage import AskVantageService
 from app.services.companies import CompanyService
 from app.services.fetching import HttpxSourceFetcher, PlaywrightBrowserFetcher, SourceFetcher
@@ -79,8 +83,14 @@ def get_ingestion_service(
 def get_llm_provider(settings: Annotated[Settings, Depends(get_settings)]) -> LLMProvider:
     if settings.llm_provider == "mock":
         return MockLLMProvider()
-    raise NotImplementedError(
-        "A real Azure OpenAI provider is not implemented yet; set LLM_PROVIDER=mock"
+    # Settings.validate_provider_configuration already guarantees these are set
+    # whenever llm_provider == "azure_openai"; str()/asserts below just satisfy typing.
+    assert settings.azure_openai_endpoint and settings.azure_openai_api_key and settings.azure_openai_chat_deployment
+    return AzureOpenAILLMProvider(
+        endpoint=str(settings.azure_openai_endpoint),
+        api_key=settings.azure_openai_api_key,
+        api_version=settings.azure_openai_api_version,
+        chat_deployment=settings.azure_openai_chat_deployment,
     )
 
 
@@ -96,8 +106,13 @@ def get_intelligence_service(
 def get_embedding_provider(settings: Annotated[Settings, Depends(get_settings)]) -> EmbeddingProvider:
     if settings.embedding_provider == "mock":
         return MockEmbeddingProvider(dimensions=settings.embedding_dimensions)
-    raise NotImplementedError(
-        "A real embedding provider is not implemented yet; set EMBEDDING_PROVIDER=mock"
+    assert settings.azure_openai_endpoint and settings.azure_openai_api_key and settings.azure_openai_embedding_deployment
+    return AzureOpenAIEmbeddingProvider(
+        endpoint=str(settings.azure_openai_endpoint),
+        api_key=settings.azure_openai_api_key,
+        api_version=settings.azure_openai_api_version,
+        embedding_deployment=settings.azure_openai_embedding_deployment,
+        dimensions=settings.azure_openai_embedding_dimensions,
     )
 
 

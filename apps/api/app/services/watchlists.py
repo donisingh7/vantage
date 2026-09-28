@@ -1,7 +1,9 @@
 from typing import Literal
 from uuid import UUID
 
-from app.models import Watchlist
+from sqlalchemy import func, select
+
+from app.models import Company, Topic, Watchlist
 from app.schemas.watchlists import WatchlistCreate, WatchlistUpdate
 from app.services.base import WorkspaceResourceService
 from app.services.companies import CompanyService
@@ -39,6 +41,18 @@ class WatchlistService(WorkspaceResourceService[Watchlist]):
         self.apply_changes(watchlist, changes)
         await self.session.commit()
         return watchlist
+
+    async def list_containing(
+        self, *, company_id: UUID | None = None, topic_id: UUID | None = None
+    ) -> list[Watchlist]:
+        """Watchlists containing a given company/topic, in one query -- avoids an N+1 detail fetch."""
+        statement = select(Watchlist).where(Watchlist.workspace_id == self.workspace_id)
+        if company_id is not None:
+            statement = statement.where(Watchlist.companies.any(Company.id == company_id))
+        if topic_id is not None:
+            statement = statement.where(Watchlist.topics.any(Topic.id == topic_id))
+        statement = statement.order_by(func.lower(Watchlist.name))
+        return list((await self.session.execute(statement)).scalars().unique().all())
 
     async def count_active(self) -> int:
         watchlists = await self.list()

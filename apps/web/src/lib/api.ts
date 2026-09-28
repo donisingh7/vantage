@@ -172,6 +172,12 @@ export const sourcesApi = {
 
 export const watchlistsApi = {
   list: (search?: string) => request<ListResponse<Watchlist>>(queryPath("/api/v1/watchlists", search)),
+  listContaining: (params: { company_id?: string; topic_id?: string }) => {
+    const query = new URLSearchParams();
+    if (params.company_id) query.set("company_id", params.company_id);
+    if (params.topic_id) query.set("topic_id", params.topic_id);
+    return request<ListResponse<Watchlist>>(`/api/v1/watchlists?${query.toString()}`);
+  },
   get: (id: string) => request<WatchlistDetail>(`/api/v1/watchlists/${id}`),
   create: (data: { name: string; description?: string | null; is_active?: boolean }) =>
     request<Watchlist>("/api/v1/watchlists", { method: "POST", body: jsonBody(data) }),

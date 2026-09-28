@@ -25,8 +25,8 @@ async def create_source(client, name="Feed", url="https://example.com/feed", sou
 
 async def insert_document(sessions, *, workspace_id, source_id, title="Doc", content=RELEVANT_CONTENT, url=None):
     async with sessions() as session:
-        from datetime import UTC, datetime
         import hashlib
+        from datetime import UTC, datetime
 
         document = Document(
             workspace_id=workspace_id,
@@ -49,11 +49,11 @@ async def insert_document(sessions, *, workspace_id, source_id, title="Doc", con
 
 
 def test_document_analysis_result_rejects_out_of_range_scores():
-    base = dict(
-        relevant=True, relevance_score=0.5, signal_type="product", title="T", executive_summary="S",
-        importance_score=0.5, sentiment="neutral", key_entities=[], key_points=[], business_impact="B",
-        confidence_score=0.5, evidence_excerpt="E",
-    )
+    base = {
+        "relevant": True, "relevance_score": 0.5, "signal_type": "product", "title": "T", "executive_summary": "S",
+        "importance_score": 0.5, "sentiment": "neutral", "key_entities": [], "key_points": [], "business_impact": "B",
+        "confidence_score": 0.5, "evidence_excerpt": "E",
+    }
     DocumentAnalysisResult.model_validate(base)  # valid, should not raise
     with pytest.raises(ValidationError):
         DocumentAnalysisResult.model_validate({**base, "relevance_score": 1.5})

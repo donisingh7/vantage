@@ -111,8 +111,8 @@ class HttpxSourceFetcher:
                 if len((rendered_page.content or "").strip()) > content_length:
                     page = rendered_page
                     html = rendered_html
-            except Exception:
-                pass  # The browser fallback is best-effort; keep the HTTP result on failure.
+            except Exception:  # noqa: S110 - best-effort fallback; keep the HTTP result on failure.
+                pass
 
         canonical = page.canonical_url or str(response.url)
         excerpt = page.content[:EXCERPT_LENGTH].strip() if page.content else None

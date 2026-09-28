@@ -9,8 +9,11 @@ from app.core.exceptions import NotFoundError
 from app.models import Document, DocumentChunk
 from app.providers.embeddings import EmbeddingProvider
 from app.services.chunking import DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP, chunk_text
+from app.services.concurrency import InProcessKeyGuard
 
 MAX_INDEX_PENDING_LIMIT = 25
+
+_indexing_guard = InProcessKeyGuard(conflict_message="Indexing is already running for this document")
 
 
 @dataclass
@@ -50,6 +53,10 @@ class DocumentIndexingService:
         return int((await self.session.execute(statement)).scalar_one())
 
     async def index_document(self, document_id: UUID, *, force: bool = False) -> IndexResult:
+        async with _indexing_guard.acquire(document_id):
+            return await self._index_document(document_id, force=force)
+
+    async def _index_document(self, document_id: UUID, *, force: bool) -> IndexResult:
         document = await self._get_document(document_id)
 
         already_current = (

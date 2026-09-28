@@ -5,7 +5,11 @@ from fastapi import APIRouter, Query
 from app.api.deps import IntelligenceAnalysisServiceDep
 from app.models import Sentiment, SignalType
 from app.schemas.common import ListResponse
-from app.schemas.intelligence import AnalyzePendingRequest, AnalyzePendingResult, IntelligenceSignalRead
+from app.schemas.intelligence import (
+    AnalyzePendingRequest,
+    AnalyzePendingResult,
+    IntelligenceSignalRead,
+)
 
 router = APIRouter(prefix="/intelligence", tags=["intelligence"])
 

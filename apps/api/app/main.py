@@ -12,13 +12,15 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.db.session import SessionFactory
-from app.services.scheduler import IngestionScheduler
+from app.services.scheduler import IngestionScheduler, should_enable_scheduler
 
 settings = get_settings()
 configure_logging(settings.log_level)
 logger = logging.getLogger("vantage")
 scheduler = IngestionScheduler(
-    SessionFactory, enabled=settings.enable_scheduler, interval_seconds=settings.scheduler_interval_seconds
+    SessionFactory,
+    enabled=should_enable_scheduler(enable_scheduler=settings.enable_scheduler, app_env=settings.app_env),
+    interval_seconds=settings.scheduler_interval_seconds,
 )
 
 
