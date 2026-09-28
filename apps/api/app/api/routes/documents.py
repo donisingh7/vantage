@@ -15,6 +15,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def list_documents(
     service: IngestionServiceDep,
     analysis: IntelligenceAnalysisServiceDep,
+    indexing: IndexingServiceDep,
     source_id: UUID | None = Query(default=None),
 ) -> ListResponse[DocumentRead]:
     documents = await service.list_documents(source_id)
@@ -24,7 +25,7 @@ async def list_documents(
             update={
                 "analysis_status": signals[document.id].analysis_status.value if document.id in signals else None,
                 "signal_id": signals[document.id].id if document.id in signals else None,
-                "indexed": bool(document.content_hash) and document.indexed_content_hash == document.content_hash,
+                "indexed": indexing.is_current(document),
             }
         )
         for document in documents

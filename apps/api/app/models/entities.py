@@ -210,6 +210,11 @@ class Document(WorkspaceEntity, Base):
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     indexed_content_hash: Mapped[str | None] = mapped_column(String(64))
+    # Which embedding provider/config produced the current DocumentChunk rows (see
+    # EmbeddingProvider.fingerprint()). A document is only "currently indexed" when both
+    # this AND indexed_content_hash still match -- otherwise a provider/dimension switch
+    # would silently leave stale, dimension-mismatched vectors behind.
+    indexed_embedding_fingerprint: Mapped[str | None] = mapped_column(String(200))
 
 
 class DocumentChunk(WorkspaceEntity, Base):
