@@ -268,7 +268,7 @@ def test_lambda_handler_imports_and_is_callable():
 # -- Serverless PostgreSQL connection handling --------------------------------
 
 
-def test_serverless_postgres_uses_nullpool_and_disables_prepared_statement_cache(monkeypatch):
+def test_serverless_postgres_uses_nullpool(monkeypatch):
     from sqlalchemy.pool import NullPool
 
     captured: dict = {}
@@ -283,7 +283,40 @@ def test_serverless_postgres_uses_nullpool_and_disables_prepared_statement_cache
 
     create_engine("postgresql+asyncpg://user:pass@host/db", serverless=True)
     assert captured["poolclass"] is NullPool
-    assert captured["connect_args"] == {"statement_cache_size": 0, "ssl": True}
+
+
+def test_serverless_postgres_requires_ssl(monkeypatch):
+    captured: dict = {}
+
+    def fake_create_async_engine(url, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(pool=kwargs.get("poolclass"))
+
+    monkeypatch.setattr("app.db.session.create_async_engine", fake_create_async_engine)
+    from app.db.session import create_engine
+
+    create_engine("postgresql+asyncpg://user:pass@host/db", serverless=True)
+    assert captured["connect_args"]["ssl"] is True
+
+
+def test_serverless_postgres_does_not_disable_prepared_statement_cache(monkeypatch):
+    """SQLAlchemy's asyncpg dialect relies on server-side prepared statements, which a
+    transaction-mode pooler doesn't support -- this repo does not claim transaction-pooler
+    compatibility, and does not attempt to fake it by disabling asyncpg's statement cache.
+    The supported production path is a session-mode pooler or a direct connection.
+    """
+    captured: dict = {}
+
+    def fake_create_async_engine(url, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(pool=kwargs.get("poolclass"))
+
+    monkeypatch.setattr("app.db.session.create_async_engine", fake_create_async_engine)
+    from app.db.session import create_engine
+
+    create_engine("postgresql+asyncpg://user:pass@host/db", serverless=True)
+    assert "statement_cache_size" not in captured["connect_args"]
+    assert captured["connect_args"] == {"ssl": True}
 
 
 def test_non_serverless_postgres_uses_default_pooling(monkeypatch):

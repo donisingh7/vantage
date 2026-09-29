@@ -46,16 +46,25 @@ def create_engine(database_url: str, *, serverless: bool = False) -> AsyncEngine
         return engine
 
     if is_postgres(database_url) and serverless:
-        # A serverless/transaction-pooler Postgres endpoint (e.g. Supabase's pooler) hands out
-        # a different backend connection per query, so a normal persistent pool doesn't help,
-        # and asyncpg's server-side prepared-statement cache can bind a statement to a
-        # connection the pooler then hands to someone else -- disable both. This is plain
-        # SQLAlchemy/asyncpg configuration for any transaction-pooled PostgreSQL, not
-        # Supabase-specific: no hostname, project ID, or credentials are referenced here.
+        # DATABASE_SERVERLESS=true means "this process is a serverless/autoscaling
+        # application (e.g. AWS Lambda), so don't keep a persistent client-side connection
+        # pool" -- a Lambda invocation is short-lived and instances scale independently, so
+        # a normal SQLAlchemy pool just accumulates idle/stale connections. NullPool opens a
+        # fresh connection per checkout and closes it on release instead.
+        #
+        # This is NOT prepared-statement-cache-disabling transaction-pooler compatibility.
+        # SQLAlchemy's asyncpg dialect relies on server-side prepared statements, and a
+        # PgBouncer/Supabase-style *transaction* pooler doesn't support those -- so a
+        # transaction pooler is not supported here, and this repo doesn't attempt to make it
+        # work by disabling asyncpg's statement cache. The intended production endpoint is a
+        # *session*-mode pooler (or a direct connection), where each checked-out connection
+        # keeps its session for the checkout's lifetime and prepared statements behave
+        # normally. No hostname, project ID, or credentials are referenced here -- this is
+        # plain SQLAlchemy/asyncpg configuration, not provider-specific.
         return create_async_engine(
             database_url,
             poolclass=NullPool,
-            connect_args={"statement_cache_size": 0, "ssl": True},
+            connect_args={"ssl": True},
         )
 
     return create_async_engine(database_url, pool_pre_ping=True)
