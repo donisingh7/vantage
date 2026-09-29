@@ -19,14 +19,22 @@ class Settings(BaseSettings):
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
     database_url: str = "sqlite+aiosqlite:///./data/vantage.db"
-    llm_provider: Literal["mock", "azure_openai"] = "mock"
-    embedding_provider: Literal["mock", "azure_openai"] = "mock"
+    # Serverless PostgreSQL (e.g. Supabase's transaction pooler): use NullPool and disable
+    # asyncpg's prepared-statement cache instead of a normal persistent connection pool.
+    # No effect on SQLite. See app/db/session.py.
+    database_serverless: bool = False
+    llm_provider: Literal["mock", "azure_openai", "gemini"] = "mock"
+    embedding_provider: Literal["mock", "azure_openai", "gemini"] = "mock"
     azure_openai_endpoint: AnyHttpUrl | None = None
     azure_openai_api_key: str | None = Field(default=None, repr=False)
     azure_openai_api_version: str = "2024-08-01-preview"
     azure_openai_chat_deployment: str | None = None
     azure_openai_embedding_deployment: str | None = None
     azure_openai_embedding_dimensions: int | None = Field(default=None, ge=8, le=3072)
+    gemini_api_key: str | None = Field(default=None, repr=False)
+    gemini_chat_model: str = "gemini-2.5-flash"
+    gemini_embedding_model: str = "gemini-embedding-2"
+    gemini_embedding_dimensions: int = Field(default=768, ge=8, le=3072)
     embedding_dimensions: int = Field(default=32, ge=8, le=3072)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     frontend_url: AnyHttpUrl = "http://localhost:3000"
@@ -67,6 +75,8 @@ class Settings(BaseSettings):
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError(f"Azure OpenAI provider requires: {', '.join(missing)}")
+        if "gemini" in (self.llm_provider, self.embedding_provider) and not self.gemini_api_key:
+            raise ValueError("Gemini provider requires: GEMINI_API_KEY")
         return self
 
 

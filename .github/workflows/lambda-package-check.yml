@@ -1,0 +1,115 @@
+name: Lambda Package Check
+
+on:
+  pull_request:
+    paths:
+      - "apps/api/app/**"
+      - "apps/api/requirements-lambda.txt"
+      - ".github/workflows/lambda-package-check.yml"
+
+# Read-only, no AWS: this only builds and inspects the package on the runner. It never
+# authenticates to AWS and never deploys anything, so it needs no id-token permission.
+permissions:
+  contents: read
+
+jobs:
+  package-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Same build as .github/workflows/deploy-api-lambda.yml, minus the AWS steps: builds
+      # on Ubuntu/Python 3.12 so native packages (asyncpg) resolve as Lambda-compatible
+      # Linux wheels, using only apps/api/requirements-lambda.txt plus the app/ source.
+      - name: Build Lambda deployment package
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          rm -rf build_lambda vantage-api-lambda-check.zip
+          mkdir -p build_lambda
+          python -m pip install --upgrade pip
+          pip install --target build_lambda -r requirements-lambda.txt
+          cp -r app build_lambda/app
+          find build_lambda -name '__pycache__' -type d -prune -exec rm -rf {} +
+          cd build_lambda
+          zip -rq -X ../vantage-api-lambda-check.zip .
+
+      - name: Report package size
+        working-directory: apps/api
+        run: |
+          echo "Compressed:"
+          ls -lh vantage-api-lambda-check.zip
+          echo "Uncompressed:"
+          unzip -l vantage-api-lambda-check.zip | tail -1
+
+      # "Our" content (build_lambda/app, copied straight from this repo's app/ source) is
+      # checked for .env/tests -- third-party dependencies under build_lambda are allowed to
+      # ship their own internal tests/fixtures (normal, harmless, outside our control).
+      # Playwright is checked across the whole package: it must not appear anywhere, from us
+      # or pulled in transitively, since requirements-lambda.txt deliberately excludes it.
+      - name: Fail if excluded content is present in the package
+        working-directory: apps/api
+        run: |
+          fail=0
+
+          env_matches=$(find build_lambda/app -iname ".env" 2>/dev/null)
+          if [ -n "$env_matches" ]; then
+            echo "::error::.env is present in the Lambda package: $env_matches"
+            fail=1
+          fi
+
+          test_dir_matches=$(find build_lambda/app -type d -iname "tests" 2>/dev/null)
+          if [ -n "$test_dir_matches" ]; then
+            echo "::error::a tests/ directory is present in the Lambda package: $test_dir_matches"
+            fail=1
+          fi
+
+          test_file_matches=$(find build_lambda/app \( -iname "test_*.py" -o -iname "*_test.py" \) 2>/dev/null)
+          if [ -n "$test_file_matches" ]; then
+            echo "::error::test files are present in the Lambda package: $test_file_matches"
+            fail=1
+          fi
+
+          playwright_pkg_matches=$(find build_lambda -maxdepth 1 -iname "playwright*" 2>/dev/null)
+          if [ -n "$playwright_pkg_matches" ]; then
+            echo "::error::the playwright package is present in the Lambda package (should be excluded -- see requirements-lambda.txt): $playwright_pkg_matches"
+            fail=1
+          fi
+
+          playwright_bin_matches=$(find build_lambda \( -iname "*headless_shell*" -o -iname "chromium*" -o -ipath "*driver/*" \) 2>/dev/null)
+          if [ -n "$playwright_bin_matches" ]; then
+            echo "::error::what looks like a Playwright browser binary is present in the Lambda package: $playwright_bin_matches"
+            fail=1
+          fi
+
+          exit "$fail"
+
+      # Simulates the intended production Lambda environment, not the local SQLite default:
+      # app/db/session.py builds its engine at import time from DATABASE_URL, and the real
+      # deployment always points that at PostgreSQL (asyncpg, which IS in
+      # requirements-lambda.txt), never SQLite (aiosqlite, deliberately NOT in the Lambda
+      # package). This is a placeholder connection string only -- no real host/credentials,
+      # and nothing here actually connects to it.
+      - name: Import and call the Lambda handler
+        working-directory: apps/api
+        env:
+          APP_ENV: production
+          ENABLE_SCHEDULER: "false"
+          ENABLE_BROWSER_FALLBACK: "false"
+          DATABASE_URL: postgresql+asyncpg://placeholder:placeholder@localhost:5432/placeholder
+          DATABASE_SERVERLESS: "true"
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'build_lambda')
+          import app.lambda_handler as lh
+          assert callable(lh.handler), 'app.lambda_handler.handler is not callable'
+          print('app.lambda_handler.handler imported successfully and is callable:', lh.handler)
+          "

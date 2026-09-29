@@ -1,0 +1,61 @@
+name: Deploy API to Lambda
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Runs on Ubuntu so packages with native extensions (asyncpg) build/resolve as
+      # Linux wheels compatible with the Lambda Python 3.12 runtime.
+      - name: Build Lambda deployment package
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          rm -rf build_lambda vantage-api-lambda.zip
+          mkdir -p build_lambda
+          python -m pip install --upgrade pip
+          pip install --target build_lambda -r requirements-lambda.txt
+          cp -r app build_lambda/app
+          find build_lambda -name '__pycache__' -type d -prune -exec rm -rf {} +
+          cd build_lambda
+          zip -rq -X ../vantage-api-lambda.zip .
+
+      - name: Report package size
+        working-directory: apps/api
+        run: |
+          echo "Compressed:"
+          ls -lh vantage-api-lambda.zip
+          echo "Uncompressed:"
+          unzip -l vantage-api-lambda.zip | tail -1
+
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+          role-session-name: vantage-github-deploy-api-lambda
+          mask-aws-account-id: true
+
+      # Updates the CODE of an existing function only. Does not create the function,
+      # does not touch IAM, does not create/modify API Gateway.
+      - name: Update existing Lambda function code
+        working-directory: apps/api
+        run: |
+          aws lambda update-function-code \
+            --function-name vantage-api \
+            --zip-file fileb://vantage-api-lambda.zip

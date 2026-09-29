@@ -1,0 +1,31 @@
+# Runtime dependencies for the AWS Lambda deployment package ONLY.
+#
+# This is deliberately a smaller set than apps/api/pyproject.toml's main dependencies:
+# it excludes everything only needed for local SQLite development, tests, or optional
+# providers/features that are off by default in production (see app/lambda_handler.py
+# and the "production Lambda settings" section of the README):
+#
+#   - alembic, aiosqlite     -- migrations run out of band, not at Lambda cold start;
+#                               production uses PostgreSQL, not local SQLite.
+#   - apscheduler            -- lazy-imported only if ENABLE_SCHEDULER=true; false in Lambda.
+#   - playwright             -- lazy-imported only if ENABLE_BROWSER_FALLBACK=true; false
+#                               in Lambda, and its browser binaries are never bundled here.
+#   - openai                 -- lazy-imported only if an azure_openai provider is selected;
+#                               the Gemini-based production stack doesn't select it. Add it
+#                               yourself if you deploy with LLM_PROVIDER/EMBEDDING_PROVIDER
+#                               set to azure_openai.
+#   - pgvector                -- imported nowhere yet; reserved for the future pgvector
+#                               migration, not used by the running application today.
+#   - uvicorn                 -- local dev server only; Lambda uses Mangum instead.
+#   - pytest, pytest-asyncio, ruff -- dev/test tooling only.
+#
+# Keep this file's version ranges in sync with the corresponding entries in pyproject.toml.
+
+fastapi>=0.115,<1
+mangum>=0.17,<1
+pydantic-settings>=2.6,<3
+sqlalchemy[asyncio]>=2.0,<3
+asyncpg>=0.29,<1
+httpx>=0.27,<1
+feedparser>=6.0,<7
+google-genai>=0.3,<2
