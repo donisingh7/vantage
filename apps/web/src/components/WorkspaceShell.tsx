@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 
 const navigation = [
-  { label: "Overview", href: "/", icon: Layers3 },
+  { label: "Overview", href: "/workspace/overview", icon: Layers3 },
   { label: "Intelligence", href: "/workspace/intelligence", icon: Activity },
   { label: "Watchlists", href: "/workspace/watchlists", icon: FileSearch },
   { label: "Companies", href: "/workspace/companies", icon: Building2 },
@@ -28,15 +28,21 @@ const navigation = [
   { label: "Ask Vantage", href: "/workspace/ask", icon: MessageSquareText },
 ];
 
+// Settings lives outside `navigation` (rendered separately, pinned to the sidebar bottom),
+// but the breadcrumb still needs to resolve its label for the current section.
+const settingsSection = { label: "Settings", href: "/workspace/settings" };
+const breadcrumbSections = [...navigation, settingsSection];
+
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const currentSectionLabel = breadcrumbSections.find((item) => pathname.startsWith(item.href))?.label ?? "Workspace";
 
   return (
     <div className="app-frame">
       {mobileOpen && <button aria-label="Close navigation" className="nav-scrim" onClick={() => setMobileOpen(false)} />}
       <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
-        <Link className="brand" href="/" onClick={() => setMobileOpen(false)}>
+        <Link className="brand" href="/workspace/overview" onClick={() => setMobileOpen(false)}>
           <span className="brand-mark" aria-hidden="true">V</span>
           <span>vantage<span className="brand-period">.</span></span>
         </Link>
@@ -48,7 +54,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         <p className="nav-label">WORKSPACE</p>
         <nav className="primary-nav" aria-label="Workspace navigation">
           {navigation.map(({ label, href, icon: Icon }) => {
-            const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+            const active = pathname.startsWith(href);
             return (
               <Link
                 aria-current={active ? "page" : undefined}
@@ -73,6 +79,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
             <span className="profile-copy"><strong>Jordan Davis</strong><small>Executive analyst</small></span>
             <ChevronDown size={15} aria-hidden="true" />
           </div>
+          <Link className="public-site-link" href="/" onClick={() => setMobileOpen(false)}>
+            View public site
+          </Link>
         </div>
       </aside>
       <div className="main-column">
@@ -80,7 +89,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
           <button className="mobile-menu icon-button" aria-label={mobileOpen ? "Close navigation" : "Open navigation"} onClick={() => setMobileOpen(!mobileOpen)}>
             {mobileOpen ? <X size={19} /> : <Menu size={19} />}
           </button>
-          <div className="breadcrumb"><span>Northstar Group</span><span className="breadcrumb-slash">/</span><strong>{pathname === "/" ? "Overview" : navigation.find((item) => item.href === pathname)?.label ?? "Workspace"}</strong></div>
+          <div className="breadcrumb"><span>Northstar Group</span><span className="breadcrumb-slash">/</span><strong>{currentSectionLabel}</strong></div>
           <div className="topbar-tools">
             <label className="global-search">
               <Search size={15} aria-hidden="true" />
