@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     ask,
     companies,
+    dashboard,
     documents,
     ingestion,
     intelligence,
@@ -17,6 +18,7 @@ from app.api.routes import (
 api_router = APIRouter()
 api_router.include_router(system.router, tags=["system"])
 api_router.include_router(workspaces.router, tags=["workspace"])
+api_router.include_router(dashboard.router)
 api_router.include_router(watchlists.router)
 api_router.include_router(companies.router)
 api_router.include_router(topics.router)
