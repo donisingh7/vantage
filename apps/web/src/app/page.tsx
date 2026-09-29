@@ -29,7 +29,7 @@ const CAPABILITIES = [
   {
     icon: Command,
     title: "Source ingestion",
-    description: "Run ingestion on demand or on a schedule to collect documents from your active sources.",
+    description: "Run ingestion on demand to collect documents from your active sources.",
   },
   {
     icon: Sparkles,
@@ -50,7 +50,7 @@ const CAPABILITIES = [
 
 const STEPS = [
   { title: "Add companies and topics", description: "Define the organizations and themes you want Vantage to track." },
-  { title: "Add public sources", description: "Point Vantage at the websites, feeds, and news you want monitored." },
+  { title: "Add public sources", description: "Point Vantage at the websites, feeds, and news you want to pull from." },
   { title: "Build a watchlist", description: "Group companies, topics, and sources around a strategic question." },
   { title: "Run ingestion", description: "Collect the latest documents from your active sources." },
   { title: "Analyze and index", description: "Turn collected documents into structured signals and searchable evidence." },
@@ -60,7 +60,7 @@ const STEPS = [
 const WORKFLOW = ["Public sources", "Collection", "AI analysis", "Searchable intelligence", "Executive answers + citations"];
 
 const CAPABILITY_CARDS = [
-  { icon: Globe2, title: "Monitor", description: "Track companies, topics, and public sources continuously." },
+  { icon: Globe2, title: "Monitor", description: "Organize companies, topics, and public sources around the market questions you care about." },
   { icon: Sparkles, title: "Analyze", description: "Turn collected documents into structured, prioritized signals." },
   { icon: Layers3, title: "Retrieve", description: "Semantically index evidence for fast, meaning-based search." },
   { icon: MessageSquareText, title: "Ask", description: "Get grounded answers with citations back to source evidence." },

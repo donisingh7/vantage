@@ -28,9 +28,15 @@ const navigation = [
   { label: "Ask Vantage", href: "/workspace/ask", icon: MessageSquareText },
 ];
 
+// Settings lives outside `navigation` (rendered separately, pinned to the sidebar bottom),
+// but the breadcrumb still needs to resolve its label for the current section.
+const settingsSection = { label: "Settings", href: "/workspace/settings" };
+const breadcrumbSections = [...navigation, settingsSection];
+
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const currentSectionLabel = breadcrumbSections.find((item) => pathname.startsWith(item.href))?.label ?? "Workspace";
 
   return (
     <div className="app-frame">
@@ -83,7 +89,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
           <button className="mobile-menu icon-button" aria-label={mobileOpen ? "Close navigation" : "Open navigation"} onClick={() => setMobileOpen(!mobileOpen)}>
             {mobileOpen ? <X size={19} /> : <Menu size={19} />}
           </button>
-          <div className="breadcrumb"><span>Northstar Group</span><span className="breadcrumb-slash">/</span><strong>{navigation.find((item) => pathname.startsWith(item.href))?.label ?? "Workspace"}</strong></div>
+          <div className="breadcrumb"><span>Northstar Group</span><span className="breadcrumb-slash">/</span><strong>{currentSectionLabel}</strong></div>
           <div className="topbar-tools">
             <label className="global-search">
               <Search size={15} aria-hidden="true" />

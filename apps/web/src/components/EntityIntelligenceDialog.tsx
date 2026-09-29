@@ -92,21 +92,23 @@ export function EntityIntelligenceDialog({
         {error && <div className="feedback feedback-error" role="alert">{error}</div>}
 
         {loading ? (
-          <div aria-hidden="true">
+          <>
             <LoadingStatus label="Loading intelligence" />
-            <h3>Priority developments</h3>
-            <div className="signal-mini-list">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <div className="signal-mini-row" key={index}>
-                  <SkeletonLine width={70} height={16} />
-                  <div className="signal-mini-copy">
-                    <SkeletonLine width="70%" height={12} />
-                    <div style={{ marginTop: 4 }}><SkeletonLine width="90%" height={10} /></div>
+            <div aria-hidden="true">
+              <h3>Priority developments</h3>
+              <div className="signal-mini-list">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div className="signal-mini-row" key={index}>
+                    <SkeletonLine width={70} height={16} />
+                    <div className="signal-mini-copy">
+                      <SkeletonLine width="70%" height={12} />
+                      <div style={{ marginTop: 4 }}><SkeletonLine width="90%" height={10} /></div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          </>
         ) : (
           <>
             {watchlists.length > 0 && (
