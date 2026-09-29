@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, workspaceApi, type CurrentIdentity } from "@/lib/api";
+import { SettingsSkeleton } from "@/components/loading/WorkspacePageSkeleton";
 
 export function SettingsPanel() {
   const [identity, setIdentity] = useState<CurrentIdentity | null>(null);
@@ -30,11 +31,11 @@ export function SettingsPanel() {
         </div>
       </header>
       {loading ? (
-        <div className="loading-surface">Loading settings...</div>
+        <SettingsSkeleton />
       ) : error ? (
         <div className="feedback feedback-error" role="alert">{error}</div>
       ) : identity ? (
-        <div className="settings-grid">
+        <div className="settings-grid content-fade-in">
           <div className="settings-card">
             <span className="section-kicker">ACCOUNT</span>
             <h2>{identity.user.display_name}</h2>

@@ -7,6 +7,7 @@ import {
   ApiError, companiesApi, getSystemInfo, ingestionApi, intelligenceApi, sourcesApi, topicsApi, workspaceApi,
   type Company, type CrawlJob, type IntelligenceSignal, type Source, type Topic, type WorkspaceSummary,
 } from "@/lib/api";
+import { DistributionSkeleton, FocusListSkeleton, SignalListSkeleton, TimelineListSkeleton } from "@/components/loading/DashboardSkeleton";
 
 const SIGNAL_TYPE_LABELS: Record<string, string> = {
   product: "Product", competitor: "Competitor", funding: "Funding", partnership: "Partnership",
@@ -135,7 +136,7 @@ export function DashboardOverview() {
         </div>
         <div className="signal-list">
           {signals === null ? (
-            <p className="panel-footnote">Loading signals...</p>
+            <SignalListSkeleton />
           ) : prioritySignals.length === 0 ? (
             <p className="panel-footnote">No analyzed intelligence yet. Analyze a collected document on the Intelligence page.</p>
           ) : (
@@ -159,7 +160,7 @@ export function DashboardOverview() {
           <div className="section-heading compact-heading"><div><span className="section-kicker">BY TYPE</span><h2>Signal distribution</h2></div></div>
           <div className="distribution-body">
             {signals === null ? (
-              <p className="panel-footnote">Loading...</p>
+              <DistributionSkeleton />
             ) : signalTypeCounts.length === 0 ? (
               <p className="panel-footnote">No analyzed intelligence yet.</p>
             ) : (
@@ -194,7 +195,7 @@ export function DashboardOverview() {
           <div className="section-heading compact-heading"><div><span className="section-kicker">RECENTLY ANALYZED</span><h2>Latest intelligence</h2></div></div>
           <div className="timeline-list">
             {signals === null ? (
-              <p className="panel-footnote">Loading...</p>
+              <TimelineListSkeleton label="Loading latest intelligence" />
             ) : latestSignals.length === 0 ? (
               <p className="panel-footnote">No analyzed intelligence yet.</p>
             ) : (
@@ -215,7 +216,7 @@ export function DashboardOverview() {
           <div className="section-heading compact-heading"><div><span className="section-kicker">SOURCE MONITOR</span><h2>Recent ingestion activity</h2></div></div>
           <div className="timeline-list">
             {jobs === null ? (
-              <p className="panel-footnote">Loading...</p>
+              <TimelineListSkeleton label="Loading ingestion activity" />
             ) : recentJobs.length === 0 ? (
               <p className="panel-footnote">No ingestion runs yet. Run ingestion from the Sources page.</p>
             ) : (
@@ -242,7 +243,7 @@ export function DashboardOverview() {
           <div className="focus-columns">
             <div>
               <span className="section-kicker">TOP COMPANIES</span>
-              {signals === null ? <p className="panel-footnote">Loading...</p> : focusCompanies.length === 0 ? (
+              {signals === null ? <FocusListSkeleton /> : focusCompanies.length === 0 ? (
                 <p className="panel-footnote">No company-linked signals yet.</p>
               ) : (
                 <ul className="focus-list">{focusCompanies.map((item) => <li key={item.name}><span>{item.name}</span><span className="count-tag">{item.count}</span></li>)}</ul>
@@ -250,7 +251,7 @@ export function DashboardOverview() {
             </div>
             <div>
               <span className="section-kicker">TOP TOPICS</span>
-              {signals === null ? <p className="panel-footnote">Loading...</p> : focusTopics.length === 0 ? (
+              {signals === null ? <FocusListSkeleton /> : focusTopics.length === 0 ? (
                 <p className="panel-footnote">No topic-linked signals yet.</p>
               ) : (
                 <ul className="focus-list">{focusTopics.map((item) => <li key={item.name}><span>{item.name}</span><span className="count-tag">{item.count}</span></li>)}</ul>

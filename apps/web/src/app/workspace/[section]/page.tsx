@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { Construction } from "lucide-react";
-import { WorkspaceShell } from "@/components/WorkspaceShell";
+import { DashboardOverview } from "@/components/DashboardOverview";
 import { ResourceManager, type ResourceKind } from "@/components/ResourceManager";
 import { WatchlistManager } from "@/components/WatchlistManager";
 import { SettingsPanel } from "@/components/SettingsPanel";
@@ -18,63 +18,45 @@ const resourceSections: Record<string, ResourceKind> = {
 export default async function WorkspaceSectionPage({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;
 
+  if (section === "overview") {
+    return <DashboardOverview />;
+  }
+
   if (section === "intelligence") {
-    return (
-      <WorkspaceShell>
-        <IntelligenceView />
-      </WorkspaceShell>
-    );
+    return <IntelligenceView />;
   }
 
   if (section === "ask") {
-    return (
-      <WorkspaceShell>
-        <AskVantage />
-      </WorkspaceShell>
-    );
+    return <AskVantage />;
   }
 
   if (section === "watchlists") {
-    return (
-      <WorkspaceShell>
-        <WatchlistManager />
-      </WorkspaceShell>
-    );
+    return <WatchlistManager />;
   }
 
   if (section in resourceSections) {
-    return (
-      <WorkspaceShell>
-        <ResourceManager kind={resourceSections[section]} />
-      </WorkspaceShell>
-    );
+    return <ResourceManager kind={resourceSections[section]} />;
   }
 
   if (section === "settings") {
-    return (
-      <WorkspaceShell>
-        <SettingsPanel />
-      </WorkspaceShell>
-    );
+    return <SettingsPanel />;
   }
 
   const content = placeholders[section];
   if (!content) notFound();
 
   return (
-    <WorkspaceShell>
-      <div className="placeholder-page">
-        <div className="eyebrow"><span className="eyebrow-rule" />{content.eyebrow}</div>
-        <h1>{content.title}</h1>
-        <p className="heading-subtitle">{content.description}</p>
-        <section className="placeholder-surface">
-          <div className="placeholder-symbol"><Construction size={19} strokeWidth={1.7} /></div>
-          <span className="section-kicker">FOUNDATION PHASE</span>
-          <h2>This workspace is taking shape.</h2>
-          <p>Data management and intelligence workflows will be introduced in a later Vantage phase.</p>
-          <div className="planned-row"><span>Current status</span><strong>Not connected</strong></div>
-        </section>
-      </div>
-    </WorkspaceShell>
+    <div className="placeholder-page">
+      <div className="eyebrow"><span className="eyebrow-rule" />{content.eyebrow}</div>
+      <h1>{content.title}</h1>
+      <p className="heading-subtitle">{content.description}</p>
+      <section className="placeholder-surface">
+        <div className="placeholder-symbol"><Construction size={19} strokeWidth={1.7} /></div>
+        <span className="section-kicker">FOUNDATION PHASE</span>
+        <h2>This workspace is taking shape.</h2>
+        <p>Data management and intelligence workflows will be introduced in a later Vantage phase.</p>
+        <div className="planned-row"><span>Current status</span><strong>Not connected</strong></div>
+      </section>
+    </div>
   );
 }

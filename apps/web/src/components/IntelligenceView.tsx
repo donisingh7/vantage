@@ -7,6 +7,7 @@ import {
   ApiError, companiesApi, documentsApi, getSystemInfo, intelligenceApi, searchApi, sourcesApi, topicsApi,
   type Company, type Document, type IntelligenceSignal, type Sentiment, type SignalType, type Source, type Topic,
 } from "@/lib/api";
+import { CardGridSkeleton, DocumentListSkeleton } from "@/components/loading/CardGridSkeleton";
 
 const SIGNAL_TYPE_LABELS: Record<string, string> = {
   product: "Product", competitor: "Competitor", funding: "Funding", partnership: "Partnership",
@@ -160,11 +161,11 @@ export function IntelligenceView() {
           <p>Documents collected from your sources, and structured signals analyzed from them.</p>
         </div>
         <div className="row-actions">
-          <button className="secondary-button" disabled={indexingPending || pendingIndexCount === 0} onClick={() => void indexPending()}>
-            <Layers size={16} /> {indexingPending ? "Indexing..." : `Index pending (${pendingIndexCount})`}
+          <button className="secondary-button" disabled={indexingPending || pendingIndexCount === 0} aria-busy={indexingPending} onClick={() => void indexPending()}>
+            <Layers size={16} className={indexingPending ? "spin-icon" : ""} /> {indexingPending ? "Indexing..." : `Index pending (${pendingIndexCount})`}
           </button>
-          <button className="primary-button" disabled={analyzingPending || pendingCount === 0} onClick={() => void analyzePending()}>
-            <Sparkles size={16} /> {analyzingPending ? "Analyzing..." : `Analyze pending (${pendingCount})`}
+          <button className="primary-button" disabled={analyzingPending || pendingCount === 0} aria-busy={analyzingPending} onClick={() => void analyzePending()}>
+            <Sparkles size={16} className={analyzingPending ? "spin-icon" : ""} /> {analyzingPending ? "Analyzing..." : `Analyze pending (${pendingCount})`}
           </button>
         </div>
       </header>
@@ -202,11 +203,11 @@ export function IntelligenceView() {
         </div>
 
         {loading ? (
-          <div className="loading-surface">Loading signals...</div>
+          <CardGridSkeleton label="Loading analyzed intelligence" />
         ) : sortedSignals.length === 0 ? (
           <div className="empty-surface"><h2>No intelligence yet</h2><p>Analyze a collected document below to generate a structured signal, or clear your filters.</p></div>
         ) : (
-          <div className="signal-card-grid">
+          <div className="signal-card-grid content-fade-in">
             {sortedSignals.map((signal) => {
               const document = documentsById[signal.document_id];
               const source = document ? sourcesById[document.source_id] : undefined;
@@ -242,11 +243,11 @@ export function IntelligenceView() {
         <h2>Collected</h2>
         <p className="section-subtitle">Raw documents fetched from your active sources. This list is not analyzed intelligence by itself.</p>
         {loading ? (
-          <div className="loading-surface">Loading collected documents...</div>
+          <DocumentListSkeleton />
         ) : documents.length === 0 ? (
           <div className="empty-surface"><h2>No documents collected yet</h2><p>Run ingestion from a source on the Sources page to collect its content here.</p></div>
         ) : (
-          <div className="document-list">
+          <div className="document-list content-fade-in">
             {documents.map((document) => (
               <article className="document-card" key={document.id}>
                 <div className="document-card-heading">
@@ -272,15 +273,19 @@ export function IntelligenceView() {
                     <button
                       className="secondary-button compact-button"
                       disabled={indexing === document.id}
+                      aria-busy={indexing === document.id}
                       onClick={() => void indexDocument(document)}
                     >
+                      {indexing === document.id && <Layers size={13} className="spin-icon" />}
                       {indexing === document.id ? "Indexing..." : document.indexed ? "Re-index" : "Index"}
                     </button>
                     <button
                       className="secondary-button compact-button"
                       disabled={analyzing === document.id}
+                      aria-busy={analyzing === document.id}
                       onClick={() => void analyzeDocument(document)}
                     >
+                      {analyzing === document.id && <Sparkles size={13} className="spin-icon" />}
                       {analyzing === document.id ? "Analyzing..." : document.analysis_status ? "Re-analyze" : "Analyze"}
                     </button>
                   </div>

@@ -4,6 +4,9 @@ import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { ExternalLink, Search, Sparkles } from "lucide-react";
 import { ApiError, askApi, type AskResponse } from "@/lib/api";
+import { WorkspacePageSkeleton } from "@/components/loading/WorkspacePageSkeleton";
+
+const ASK_STAGES = ["Retrieving evidence", "Reading relevant sources", "Generating grounded answer"];
 
 const EXAMPLE_QUESTIONS = [
   "What recent funding announcements have been collected?",
@@ -13,7 +16,7 @@ const EXAMPLE_QUESTIONS = [
 
 export function AskVantage() {
   return (
-    <Suspense fallback={<section className="management-page ask-page"><div className="loading-surface">Loading Ask Vantage...</div></section>}>
+    <Suspense fallback={<WorkspacePageSkeleton />}>
       <AskVantageContent />
     </Suspense>
   );
@@ -76,8 +79,8 @@ function AskVantageContent() {
             maxLength={2000}
           />
         </label>
-        <button className="primary-button" type="submit" disabled={loading || !question.trim()}>
-          <Sparkles size={16} /> {loading ? "Thinking..." : "Ask"}
+        <button className="primary-button" type="submit" disabled={loading || !question.trim()} aria-busy={loading}>
+          <Sparkles size={16} className={loading ? "spin-icon" : ""} /> {loading ? "Thinking..." : "Ask"}
         </button>
       </form>
 
@@ -96,10 +99,18 @@ function AskVantageContent() {
 
       {error && <div className="feedback feedback-error" role="alert">{error}</div>}
 
-      {loading && <div className="loading-surface">Retrieving evidence and generating an answer...</div>}
+      {loading && (
+        <div className="ask-waiting" role="status" aria-label="Working on your answer: retrieving evidence, reading relevant sources, and generating a grounded response">
+          <ul className="ask-stage-list" aria-hidden="true">
+            {ASK_STAGES.map((stage, index) => (
+              <li className="ask-stage" style={{ animationDelay: `${index * 550}ms` }} key={stage}>{stage}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {!loading && result && (
-        <div className="ask-answer">
+        <div className="ask-answer content-fade-in">
           <div className="ask-answer-heading">
             <span className="section-kicker">
               {result.grounded ? `GROUNDED IN ${result.retrieved_count} RESULT${result.retrieved_count === 1 ? "" : "S"}` : "NO EVIDENCE FOUND"}
