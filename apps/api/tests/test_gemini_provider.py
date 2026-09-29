@@ -285,7 +285,12 @@ def test_serverless_postgres_uses_nullpool(monkeypatch):
     assert captured["poolclass"] is NullPool
 
 
-def test_serverless_postgres_requires_ssl(monkeypatch):
+def test_serverless_postgres_requires_ssl_without_cert_verification(monkeypatch):
+    """asyncpg's ssl=True builds a default *validating* SSLContext, which fails against
+    Supabase's certificate chain with SSLCertVerificationError. ssl="require" requires
+    encrypted transport (like PostgreSQL's sslmode=require) without CA/hostname
+    verification -- the fix for that real failure. Must be the string "require", not True.
+    """
     captured: dict = {}
 
     def fake_create_async_engine(url, **kwargs):
@@ -296,14 +301,16 @@ def test_serverless_postgres_requires_ssl(monkeypatch):
     from app.db.session import create_engine
 
     create_engine("postgresql+asyncpg://user:pass@host/db", serverless=True)
-    assert captured["connect_args"]["ssl"] is True
+    assert captured["connect_args"]["ssl"] == "require"
+    assert captured["connect_args"]["ssl"] is not True
 
 
 def test_serverless_postgres_does_not_disable_prepared_statement_cache(monkeypatch):
     """SQLAlchemy's asyncpg dialect relies on server-side prepared statements, which a
     transaction-mode pooler doesn't support -- this repo does not claim transaction-pooler
     compatibility, and does not attempt to fake it by disabling asyncpg's statement cache.
-    The supported production path is a session-mode pooler or a direct connection.
+    The supported production path is a session-mode pooler (or a direct connection), where
+    prepared statements work normally and no such override is needed.
     """
     captured: dict = {}
 
@@ -316,7 +323,7 @@ def test_serverless_postgres_does_not_disable_prepared_statement_cache(monkeypat
 
     create_engine("postgresql+asyncpg://user:pass@host/db", serverless=True)
     assert "statement_cache_size" not in captured["connect_args"]
-    assert captured["connect_args"] == {"ssl": True}
+    assert captured["connect_args"] == {"ssl": "require"}
 
 
 def test_non_serverless_postgres_uses_default_pooling(monkeypatch):
