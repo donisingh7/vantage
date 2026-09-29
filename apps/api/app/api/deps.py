@@ -9,9 +9,15 @@ from app.db.session import get_db_session
 from app.providers.embeddings import (
     AzureOpenAIEmbeddingProvider,
     EmbeddingProvider,
+    GeminiEmbeddingProvider,
     MockEmbeddingProvider,
 )
-from app.providers.llm import AzureOpenAILLMProvider, LLMProvider, MockLLMProvider
+from app.providers.llm import (
+    AzureOpenAILLMProvider,
+    GeminiLLMProvider,
+    LLMProvider,
+    MockLLMProvider,
+)
 from app.services.ask_vantage import AskVantageService
 from app.services.companies import CompanyService
 from app.services.fetching import HttpxSourceFetcher, PlaywrightBrowserFetcher, SourceFetcher
@@ -83,6 +89,11 @@ def get_ingestion_service(
 def get_llm_provider(settings: Annotated[Settings, Depends(get_settings)]) -> LLMProvider:
     if settings.llm_provider == "mock":
         return MockLLMProvider()
+    if settings.llm_provider == "gemini":
+        # Settings.validate_provider_configuration already guarantees this is set
+        # whenever llm_provider == "gemini"; the assert below just satisfies typing.
+        assert settings.gemini_api_key
+        return GeminiLLMProvider(api_key=settings.gemini_api_key, model=settings.gemini_chat_model)
     # Settings.validate_provider_configuration already guarantees these are set
     # whenever llm_provider == "azure_openai"; str()/asserts below just satisfy typing.
     assert settings.azure_openai_endpoint and settings.azure_openai_api_key and settings.azure_openai_chat_deployment
@@ -106,6 +117,13 @@ def get_intelligence_service(
 def get_embedding_provider(settings: Annotated[Settings, Depends(get_settings)]) -> EmbeddingProvider:
     if settings.embedding_provider == "mock":
         return MockEmbeddingProvider(dimensions=settings.embedding_dimensions)
+    if settings.embedding_provider == "gemini":
+        assert settings.gemini_api_key
+        return GeminiEmbeddingProvider(
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_embedding_model,
+            dimensions=settings.gemini_embedding_dimensions,
+        )
     assert settings.azure_openai_endpoint and settings.azure_openai_api_key and settings.azure_openai_embedding_deployment
     return AzureOpenAIEmbeddingProvider(
         endpoint=str(settings.azure_openai_endpoint),

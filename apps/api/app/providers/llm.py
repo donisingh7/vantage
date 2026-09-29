@@ -70,6 +70,52 @@ class AzureOpenAILLMProvider:
             raise ProviderError(f"Azure OpenAI request failed ({type(exc).__name__})") from exc
 
 
+class GeminiLLMProvider:
+    """Real LLMProvider backed by Google's Gemini API via the official `google-genai` SDK.
+
+    Structured output uses the SDK's own response_mime_type="application/json" +
+    response_schema support, but the returned text is still independently re-validated
+    through the caller's Pydantic schema below -- the SDK's own parsing is never trusted
+    as-is.
+    """
+
+    def __init__(self, *, api_key: str, model: str) -> None:
+        from google import genai
+
+        self._client = genai.Client(api_key=api_key)
+        self._model = model
+
+    async def generate(self, prompt: str, *, system: str | None = None) -> str:
+        from google.genai import types
+
+        config = types.GenerateContentConfig(system_instruction=system) if system else None
+        response = await self._request(contents=prompt, config=config)
+        return (response.text or "").strip()
+
+    async def structured_generate(self, prompt: str, schema: type[Any], *, system: str | None = None) -> Any:
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            system_instruction=system, response_mime_type="application/json", response_schema=schema
+        )
+        response = await self._request(contents=prompt, config=config)
+        content = response.text or "{}"
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ProviderError("Gemini returned a response that was not valid JSON") from exc
+        return schema.model_validate(parsed)
+
+    async def _request(self, *, contents: str, config: Any) -> Any:
+        from google.genai import errors as genai_errors
+
+        try:
+            return await self._client.aio.models.generate_content(model=self._model, contents=contents, config=config)
+        except genai_errors.APIError as exc:
+            # Never surface the raw SDK exception: it can echo request details back to the client.
+            raise ProviderError(f"Gemini request failed ({type(exc).__name__})") from exc
+
+
 # Field names of the document-analysis structured-output contract (see
 # app.services.analysis_schema.DocumentAnalysisResult). Matched by name only, so this
 # provider never has to import that service-layer schema.
