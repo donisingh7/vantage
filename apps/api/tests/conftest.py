@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic_settings import PydanticBaseSettingsSource
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api.deps import get_embedding_provider, get_llm_provider
@@ -13,6 +14,28 @@ from app.main import app
 from app.models import MemberRole, User, Workspace, WorkspaceMember
 from app.providers.embeddings import MockEmbeddingProvider
 from app.providers.llm import MockLLMProvider
+
+
+class IsolatedTestSettings(Settings):
+    """Settings that read ONLY explicit init kwargs / field defaults.
+
+    `Settings(_env_file=None)` alone still lets pydantic-settings fall back to real OS
+    process environment variables -- it only turns off .env loading. Dropping env_settings,
+    dotenv_settings, and file_secret_settings here means no ambient environment variable,
+    no .env file, and no mounted secret file can ever reach a test, no matter what happens
+    to be set on the machine running them.
+    """
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[Settings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
 
 
 @pytest.fixture
@@ -32,12 +55,14 @@ async def client(sessions) -> AsyncIterator[AsyncClient]:
             yield session
 
     app.dependency_overrides[get_db_session] = override_session
-    # Tests must be fully isolated from whatever real .env happens to exist locally (e.g.
-    # one kept for production-config smoke testing, per app/db/session.py's serverless
-    # tests) -- never a real LLM/embedding provider, real credentials, or even a
-    # provider-name label derived from real settings. Force safe, deterministic settings
-    # and mock providers for every test regardless of the ambient environment.
-    app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
+    # Tests must be fully isolated from whatever real .env or OS environment variables
+    # happen to exist locally (e.g. a .env kept for production-config smoke testing, per
+    # app/db/session.py's serverless tests) -- never a real LLM/embedding provider, real
+    # credentials, or even a provider-name label derived from real settings.
+    # IsolatedTestSettings reads only field defaults (no env/.env/secret-file sources), and
+    # the provider dependencies are pinned to the mocks, for every test regardless of the
+    # ambient environment.
+    app.dependency_overrides[get_settings] = lambda: IsolatedTestSettings()
     app.dependency_overrides[get_llm_provider] = lambda: MockLLMProvider()
     app.dependency_overrides[get_embedding_provider] = lambda: MockEmbeddingProvider(dimensions=16)
     async with AsyncClient(
