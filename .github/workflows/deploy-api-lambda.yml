@@ -43,6 +43,17 @@ jobs:
           echo "Uncompressed:"
           unzip -l vantage-api-lambda.zip | tail -1
 
+      # Lambda's CodeSha256 is the base64-encoded SHA-256 digest of the raw ZIP bytes.
+      # Computed here, before upload, so the post-deploy step can confirm AWS actually
+      # stored exactly this file -- byte for byte -- without needing to re-download it.
+      - name: Compute local ZIP SHA-256 (Lambda CodeSha256 format)
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          local_sha256=$(openssl dgst -sha256 -binary vantage-api-lambda.zip | openssl base64)
+          echo "local_sha256=$local_sha256" >> "$GITHUB_ENV"
+          echo "Local ZIP SHA-256 (base64): $local_sha256"
+
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
@@ -51,11 +62,89 @@ jobs:
           role-session-name: vantage-github-deploy-api-lambda
           mask-aws-account-id: true
 
-      # Updates the CODE of an existing function only. Does not create the function,
-      # does not touch IAM, does not create/modify API Gateway.
+      # SECURITY: the *unfiltered* response of `aws lambda get-function-configuration` (and
+      # of `update-function-code`) includes the function's Environment object -- which is
+      # exactly where secrets like DATABASE_URL or GEMINI_API_KEY live. Every AWS CLI call in
+      # this workflow that can return function configuration MUST pass --query with an
+      # explicit field allowlist, so only those named, non-secret fields are ever computed
+      # into the command's output -- Environment is never requested, and nothing this
+      # workflow prints can include it. Do not remove --query from any call below, and do not
+      # add a plain `aws lambda get-function-configuration` (or `update-function-code`) call
+      # without one.
+      - name: Pre-deploy safety check (safe fields only)
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          config=$(aws lambda get-function-configuration \
+            --function-name vantage-api \
+            --query '{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,Architectures:Architectures,MemorySize:MemorySize,Timeout:Timeout,State:State,LastUpdateStatus:LastUpdateStatus}' \
+            --output json \
+            --no-cli-pager)
+          echo "Current function configuration (safe fields only):"
+          echo "$config"
+
+          runtime=$(echo "$config" | jq -r '.Runtime')
+          handler=$(echo "$config" | jq -r '.Handler')
+          architecture=$(echo "$config" | jq -r '.Architectures[0]')
+          state=$(echo "$config" | jq -r '.State')
+
+          fail=0
+          [ "$runtime" = "python3.12" ] || { echo "::error::Runtime is '$runtime', expected python3.12"; fail=1; }
+          [ "$handler" = "app.lambda_handler.handler" ] || { echo "::error::Handler is '$handler', expected app.lambda_handler.handler"; fail=1; }
+          [ "$architecture" = "x86_64" ] || { echo "::error::Architecture is '$architecture', expected x86_64"; fail=1; }
+          [ "$state" = "Active" ] || { echo "::error::Function state is '$state', expected Active"; fail=1; }
+          exit "$fail"
+
+      # SECURITY: --query allowlists only non-secret fields (never Environment, Role, or KMS
+      # details). This updates code only on the existing vantage-api function -- it cannot
+      # create a function, change IAM, or touch API Gateway.
       - name: Update existing Lambda function code
         working-directory: apps/api
         run: |
+          set -euo pipefail
           aws lambda update-function-code \
             --function-name vantage-api \
-            --zip-file fileb://vantage-api-lambda.zip
+            --zip-file fileb://vantage-api-lambda.zip \
+            --query '{FunctionName:FunctionName,LastModified:LastModified,CodeSize:CodeSize,CodeSha256:CodeSha256,Version:Version,Architectures:Architectures}' \
+            --output json \
+            --no-cli-pager
+
+      - name: Wait for the code update to finish
+        run: aws lambda wait function-updated --function-name vantage-api
+
+      # SECURITY: same allowlist discipline as the pre-deploy check above -- Environment is
+      # never requested here either.
+      - name: Post-deploy verification (safe fields only)
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          config=$(aws lambda get-function-configuration \
+            --function-name vantage-api \
+            --query '{Runtime:Runtime,Handler:Handler,Architectures:Architectures,State:State,LastUpdateStatus:LastUpdateStatus,CodeSha256:CodeSha256}' \
+            --output json \
+            --no-cli-pager)
+          echo "Post-deploy function configuration (safe fields only):"
+          echo "$config"
+
+          runtime=$(echo "$config" | jq -r '.Runtime')
+          handler=$(echo "$config" | jq -r '.Handler')
+          architecture=$(echo "$config" | jq -r '.Architectures[0]')
+          state=$(echo "$config" | jq -r '.State')
+          last_update_status=$(echo "$config" | jq -r '.LastUpdateStatus')
+          remote_sha256=$(echo "$config" | jq -r '.CodeSha256')
+
+          fail=0
+          [ "$runtime" = "python3.12" ] || { echo "::error::Runtime is '$runtime', expected python3.12"; fail=1; }
+          [ "$handler" = "app.lambda_handler.handler" ] || { echo "::error::Handler is '$handler', expected app.lambda_handler.handler"; fail=1; }
+          [ "$architecture" = "x86_64" ] || { echo "::error::Architecture is '$architecture', expected x86_64"; fail=1; }
+          [ "$state" = "Active" ] || { echo "::error::Function state is '$state', expected Active"; fail=1; }
+          [ "$last_update_status" = "Successful" ] || { echo "::error::LastUpdateStatus is '$last_update_status', expected Successful"; fail=1; }
+
+          if [ "$remote_sha256" != "$local_sha256" ]; then
+            echo "::error::Deployed CodeSha256 ($remote_sha256) does not match the local ZIP's SHA-256 ($local_sha256) -- AWS did not store the exact package this run built"
+            fail=1
+          else
+            echo "Deployed CodeSha256 matches the local ZIP: $remote_sha256"
+          fi
+
+          exit "$fail"
