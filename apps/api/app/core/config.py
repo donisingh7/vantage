@@ -19,9 +19,13 @@ class Settings(BaseSettings):
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
     database_url: str = "sqlite+aiosqlite:///./data/vantage.db"
-    # Serverless PostgreSQL (e.g. Supabase's transaction pooler): use NullPool and disable
-    # asyncpg's prepared-statement cache instead of a normal persistent connection pool.
-    # No effect on SQLite. See app/db/session.py.
+    # For a serverless/autoscaling deployment (e.g. AWS Lambda) with a PostgreSQL
+    # DATABASE_URL: use NullPool instead of a persistent client-side connection pool, and
+    # require SSL. The intended production endpoint is Supabase's SESSION pooler (port
+    # 5432) or a direct connection -- not its transaction pooler -- so SQLAlchemy's asyncpg
+    # dialect and its server-side prepared statements keep working normally; nothing here
+    # disables asyncpg's prepared-statement cache. No effect on SQLite. See
+    # app/db/session.py.
     database_serverless: bool = False
     llm_provider: Literal["mock", "azure_openai", "gemini"] = "mock"
     embedding_provider: Literal["mock", "azure_openai", "gemini"] = "mock"

@@ -46,25 +46,35 @@ def create_engine(database_url: str, *, serverless: bool = False) -> AsyncEngine
         return engine
 
     if is_postgres(database_url) and serverless:
-        # DATABASE_SERVERLESS=true means "this process is a serverless/autoscaling
-        # application (e.g. AWS Lambda), so don't keep a persistent client-side connection
-        # pool" -- a Lambda invocation is short-lived and instances scale independently, so
-        # a normal SQLAlchemy pool just accumulates idle/stale connections. NullPool opens a
-        # fresh connection per checkout and closes it on release instead.
+        # DATABASE_SERVERLESS=true means "this process is serverless/autoscaling (e.g. AWS
+        # Lambda), so don't keep a persistent client-side connection pool" -- a Lambda
+        # invocation is short-lived and instances scale independently, so a normal
+        # SQLAlchemy pool just accumulates idle/stale connections. NullPool opens a fresh
+        # connection per checkout and closes it on release instead. That is the entire scope
+        # of this flag: it says nothing about prepared statements or pooling *mode* on the
+        # database side.
         #
-        # This is NOT prepared-statement-cache-disabling transaction-pooler compatibility.
-        # SQLAlchemy's asyncpg dialect relies on server-side prepared statements, and a
-        # PgBouncer/Supabase-style *transaction* pooler doesn't support those -- so a
-        # transaction pooler is not supported here, and this repo doesn't attempt to make it
-        # work by disabling asyncpg's statement cache. The intended production endpoint is a
-        # *session*-mode pooler (or a direct connection), where each checked-out connection
-        # keeps its session for the checkout's lifetime and prepared statements behave
-        # normally. No hostname, project ID, or credentials are referenced here -- this is
-        # plain SQLAlchemy/asyncpg configuration, not provider-specific.
+        # The intended production endpoint is Supabase's SESSION pooler (or a direct
+        # connection) on port 5432, not its transaction pooler. A session pooler keeps one
+        # backend session per checked-out connection for the checkout's lifetime, so
+        # SQLAlchemy's asyncpg dialect and its server-side prepared statements work
+        # normally -- this repo does not disable asyncpg's statement cache and does not
+        # claim transaction-pooler compatibility (a transaction pooler hands out a
+        # different backend connection per query/transaction, which breaks prepared
+        # statements; that mode remains unsupported here).
+        #
+        # ssl="require" tells asyncpg to require an encrypted connection without validating
+        # the server's certificate -- equivalent in intent to PostgreSQL's sslmode=require.
+        # It does NOT perform CA or hostname verification (unlike ssl=True, which builds a
+        # default *validating* SSLContext and fails against Supabase's certificate chain
+        # with SSLCertVerificationError). A stronger sslmode=verify-full, pinned to
+        # Supabase's CA certificate, could be added later as a separate hardening step; it
+        # is not done here. No hostname, project ID, or credentials are referenced in this
+        # module -- this is plain SQLAlchemy/asyncpg configuration, not provider-specific.
         return create_async_engine(
             database_url,
             poolclass=NullPool,
-            connect_args={"ssl": True},
+            connect_args={"ssl": "require"},
         )
 
     return create_async_engine(database_url, pool_pre_ping=True)
