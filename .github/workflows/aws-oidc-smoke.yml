@@ -1,0 +1,25 @@
+name: AWS OIDC Smoke Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  oidc-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+          role-session-name: vantage-github-oidc-smoke
+          mask-aws-account-id: true
+
+      - name: Verify assumed identity
+        run: |
+          aws sts get-caller-identity
