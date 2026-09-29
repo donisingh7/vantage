@@ -91,12 +91,20 @@ jobs:
 
           exit "$fail"
 
+      # Simulates the intended production Lambda environment, not the local SQLite default:
+      # app/db/session.py builds its engine at import time from DATABASE_URL, and the real
+      # deployment always points that at PostgreSQL (asyncpg, which IS in
+      # requirements-lambda.txt), never SQLite (aiosqlite, deliberately NOT in the Lambda
+      # package). This is a placeholder connection string only -- no real host/credentials,
+      # and nothing here actually connects to it.
       - name: Import and call the Lambda handler
         working-directory: apps/api
         env:
           APP_ENV: production
           ENABLE_SCHEDULER: "false"
           ENABLE_BROWSER_FALLBACK: "false"
+          DATABASE_URL: postgresql+asyncpg://placeholder:placeholder@localhost:5432/placeholder
+          DATABASE_SERVERLESS: "true"
         run: |
           python -c "
           import sys
