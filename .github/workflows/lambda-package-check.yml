@@ -49,33 +49,43 @@ jobs:
           echo "Uncompressed:"
           unzip -l vantage-api-lambda-check.zip | tail -1
 
+      # "Our" content (build_lambda/app, copied straight from this repo's app/ source) is
+      # checked for .env/tests -- third-party dependencies under build_lambda are allowed to
+      # ship their own internal tests/fixtures (normal, harmless, outside our control).
+      # Playwright is checked across the whole package: it must not appear anywhere, from us
+      # or pulled in transitively, since requirements-lambda.txt deliberately excludes it.
       - name: Fail if excluded content is present in the package
         working-directory: apps/api
         run: |
           fail=0
 
-          if find build_lambda -iname ".env" | grep -q .; then
-            echo "::error::.env is present in the Lambda package"
+          env_matches=$(find build_lambda/app -iname ".env" 2>/dev/null)
+          if [ -n "$env_matches" ]; then
+            echo "::error::.env is present in the Lambda package: $env_matches"
             fail=1
           fi
 
-          if find build_lambda -type d -iname "tests" | grep -q .; then
-            echo "::error::a tests/ directory is present in the Lambda package"
+          test_dir_matches=$(find build_lambda/app -type d -iname "tests" 2>/dev/null)
+          if [ -n "$test_dir_matches" ]; then
+            echo "::error::a tests/ directory is present in the Lambda package: $test_dir_matches"
             fail=1
           fi
 
-          if find build_lambda \( -iname "test_*.py" -o -iname "*_test.py" \) | grep -q .; then
-            echo "::error::test files are present in the Lambda package"
+          test_file_matches=$(find build_lambda/app \( -iname "test_*.py" -o -iname "*_test.py" \) 2>/dev/null)
+          if [ -n "$test_file_matches" ]; then
+            echo "::error::test files are present in the Lambda package: $test_file_matches"
             fail=1
           fi
 
-          if find build_lambda -maxdepth 1 -iname "playwright*" | grep -q .; then
-            echo "::error::the playwright package is present in the Lambda package (should be excluded -- see requirements-lambda.txt)"
+          playwright_pkg_matches=$(find build_lambda -maxdepth 1 -iname "playwright*" 2>/dev/null)
+          if [ -n "$playwright_pkg_matches" ]; then
+            echo "::error::the playwright package is present in the Lambda package (should be excluded -- see requirements-lambda.txt): $playwright_pkg_matches"
             fail=1
           fi
 
-          if find build_lambda \( -iname "*headless_shell*" -o -iname "chromium*" -o -ipath "*driver/*" \) | grep -q .; then
-            echo "::error::what looks like a Playwright browser binary is present in the Lambda package"
+          playwright_bin_matches=$(find build_lambda \( -iname "*headless_shell*" -o -iname "chromium*" -o -ipath "*driver/*" \) 2>/dev/null)
+          if [ -n "$playwright_bin_matches" ]; then
+            echo "::error::what looks like a Playwright browser binary is present in the Lambda package: $playwright_bin_matches"
             fail=1
           fi
 
