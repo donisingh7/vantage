@@ -2,16 +2,16 @@
 
 ## Current Architecture
 
-Vantage is a small monorepo: a Next.js web app and a FastAPI API, talking over HTTP. SQLite is the current system of record (see [Data Store](../README.md#data-store) in the README for the PostgreSQL/pgvector path). There is no message broker, no worker process, and no deployment infrastructure in this repository.
+Vantage is a small monorepo: a Next.js web app and a FastAPI API, talking over HTTP. Production runs the web app on Vercel and the API on AWS Lambda behind API Gateway, backed by Supabase PostgreSQL; local development uses SQLite (see the [README](../README.md) for the deployment overview). There is no message broker and no worker process.
 
 ```text
 Browser
-  | Next.js App Router + shared API client (src/lib/api.ts)
+  | Next.js App Router + shared API client (src/lib/api.ts)   -- Vercel (bom1)
   v
-FastAPI /api/v1
+FastAPI /api/v1                                               -- API Gateway + Lambda (ap-south-1)
   | async SQLAlchemy services, all workspace-scoped
   v
-SQLite (sqlite+aiosqlite) -- PostgreSQL-compatible DATABASE_URL, not yet PostgreSQL-specific
+PostgreSQL (production, Supabase) / SQLite (local development and tests)
 ```
 
 ## Request Flow: Source to Answer

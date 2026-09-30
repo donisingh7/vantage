@@ -20,6 +20,7 @@ from app.providers.llm import (
 )
 from app.services.ask_vantage import AskVantageService
 from app.services.companies import CompanyService
+from app.services.document_read import DocumentReadService
 from app.services.entity_intelligence import EntityIntelligenceService
 from app.services.fetching import HttpxSourceFetcher, PlaywrightBrowserFetcher, SourceFetcher
 from app.services.indexing import DocumentIndexingService
@@ -204,6 +205,16 @@ def get_intelligence_bootstrap_service(
 
 
 IntelligenceBootstrapServiceDep = Annotated[IntelligenceBootstrapService, Depends(get_intelligence_bootstrap_service)]
+
+
+def get_document_read_service(
+    session: SessionDep, context: WorkspaceContextDep, settings: Annotated[Settings, Depends(get_settings)]
+) -> DocumentReadService:
+    """No LLM/embedding provider dependency -- see DocumentReadService's module docstring."""
+    return DocumentReadService(session, context.workspace.id, settings)
+
+
+DocumentReadServiceDep = Annotated[DocumentReadService, Depends(get_document_read_service)]
 
 
 def get_entity_intelligence_service(session: SessionDep, context: WorkspaceContextDep) -> EntityIntelligenceService:

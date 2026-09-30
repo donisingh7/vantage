@@ -14,14 +14,14 @@ type FormState = { name: string; description: string; is_active: boolean };
 type Catalog = { companies: CatalogEntry[]; topics: CatalogEntry[]; sources: CatalogSource[] };
 const blank = (): FormState => ({ name: "", description: "", is_active: true });
 
-// -- DEPLOYMENT-TRANSITION COMPATIBILITY (temporary) --------------------------------
+// -- Deployment compatibility fallback (404-only) ------------------------------------
 // Only used when GET /watchlists/bootstrap/initial genuinely 404s (old Lambda, new frontend).
 // (Two path segments deliberately -- a single-segment /watchlists/bootstrap would collide
 // with the pre-Pass-3 GET /watchlists/{watchlist_id} route and 422 instead of 404 on an old Lambda.)
 // Reconstructs the same shape from the four legacy calls it replaces; the initial detail
 // is left null here and picked up by the existing selectedId effect (one GET
 // /watchlists/{id}), matching this component's pre-Pass-3 request count exactly.
-// Remove once the new endpoint is confirmed live in production.
+// Safe to delete once this endpoint is live on the deployed Lambda.
 async function loadLegacyBootstrap(): Promise<WatchlistBootstrapResponse> {
   const [list, companies, topics, sources] = await Promise.all([
     watchlistsApi.list(), companiesApi.list(), topicsApi.list(), sourcesApi.list(),
@@ -34,7 +34,7 @@ async function loadLegacyBootstrap(): Promise<WatchlistBootstrapResponse> {
     initial_detail: null,
   };
 }
-// -- End deployment-transition compatibility ----------------------------------------
+// -- End deployment compatibility fallback ------------------------------------------
 
 export function WatchlistManager() {
   const [items, setItems] = useState<Watchlist[]>([]);
@@ -53,6 +53,12 @@ export function WatchlistManager() {
   // detail. Only the response whose sequence number still matches the latest dispatched
   // request may commit state.
   const detailRequestSeq = useRef(0);
+  // An authoritative local detail update supersedes any in-flight GET /watchlists/{id}.
+  // That request's finally block won't clear loading (its sequence is stale), so clear it here.
+  function invalidateDetailRequest() {
+    detailRequestSeq.current += 1;
+    setDetailLoading(false);
+  }
 
   async function bootstrap() {
     setLoading(true);
@@ -66,7 +72,7 @@ export function WatchlistManager() {
       }
       setItems(data.watchlists);
       setCatalog({ companies: data.companies, topics: data.topics, sources: data.sources });
-      detailRequestSeq.current += 1; // invalidate any (impossible pre-mount, but for symmetry) in-flight detail request
+      invalidateDetailRequest();
       setDetail(data.initial_detail);
       setSelectedId(data.initial_detail?.id ?? data.watchlists[0]?.id ?? null);
       setError("");
@@ -89,9 +95,10 @@ export function WatchlistManager() {
     }
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap
   useEffect(() => { void bootstrap(); }, []);
   useEffect(() => {
-    if (!selectedId) { detailRequestSeq.current += 1; setDetail(null); return; }
+    if (!selectedId) { invalidateDetailRequest(); setDetail(null); return; }
     if (detail?.id === selectedId) return; // bootstrap/mutation already supplied this detail
     void loadDetail(selectedId); // bumps detailRequestSeq itself, invalidating any prior in-flight request
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -110,13 +117,13 @@ export function WatchlistManager() {
       if (dialog === "edit" && selectedId) {
         const updated = await watchlistsApi.update(selectedId, form);
         patchWatchlistInList(updated);
-        detailRequestSeq.current += 1; // invalidate any in-flight loadDetail so it can't overwrite this
+        invalidateDetailRequest();
         setDetail((prev) => (prev ? { ...prev, ...updated } : prev));
         setNotice("Watchlist updated.");
       } else {
         const created = await watchlistsApi.create(form);
         setItems((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
-        detailRequestSeq.current += 1; // invalidate any in-flight loadDetail so it can't overwrite this
+        invalidateDetailRequest();
         setDetail({ ...created, companies: [], topics: [], sources: [] });
         setSelectedId(created.id);
         setNotice("Watchlist created.");
@@ -145,7 +152,7 @@ export function WatchlistManager() {
     try {
       const updated = await watchlistsApi.update(item.id, { is_active: !item.is_active });
       patchWatchlistInList(updated);
-      detailRequestSeq.current += 1; // invalidate any in-flight loadDetail so it can't overwrite this
+      invalidateDetailRequest();
       setDetail((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
       setNotice(`Watchlist ${item.is_active ? "paused" : "activated"}.`);
     }
@@ -158,7 +165,7 @@ export function WatchlistManager() {
     setBusy(true); setError("");
     try {
       const updated = add ? await watchlistsApi.addMember(selectedId, kind, id) : await watchlistsApi.removeMember(selectedId, kind, id);
-      detailRequestSeq.current += 1; // invalidate any in-flight loadDetail so it can't overwrite this
+      invalidateDetailRequest();
       setDetail(updated);
       patchWatchlistInList(updated); // WatchlistDetail carries every Watchlist field, just also the member arrays
       setNotice(`${kind.slice(0, -1)} ${add ? "added to" : "removed from"} watchlist.`);

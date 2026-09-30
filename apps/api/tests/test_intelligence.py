@@ -297,3 +297,30 @@ async def test_list_and_get_signals_never_construct_llm_or_embedding_provider(cl
     assert listed.status_code == 200
     single = await client.get(f"{API}/intelligence/signals/{signal['id']}")
     assert single.status_code == 200
+
+
+async def test_list_documents_never_constructs_llm_or_embedding_provider(client, sessions):
+    """GET /documents is read-only -- analysis_status/signal_id/indexed must resolve without
+    constructing any AI provider. The analyze/index write routes are exercised first (with
+    the normal mocks) purely to create that metadata."""
+    from app.api.deps import get_embedding_provider, get_llm_provider
+    from app.main import app
+
+    source = await create_source(client)
+    workspace_id = UUID((await client.get(f"{API}/me")).json()["workspace"]["id"])
+    document_id = await insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+    signal = (await client.post(f"{API}/documents/{document_id}/analyze")).json()
+    assert (await client.post(f"{API}/documents/{document_id}/index")).status_code == 201
+
+    def _poison():
+        raise AssertionError("GET /documents must not construct an LLM/embedding provider")
+
+    app.dependency_overrides[get_llm_provider] = _poison
+    app.dependency_overrides[get_embedding_provider] = _poison
+
+    response = await client.get(f"{API}/documents")
+    assert response.status_code == 200
+    document = response.json()["items"][0]
+    assert document["analysis_status"] == "completed"
+    assert document["signal_id"] == signal["id"]
+    assert document["indexed"] is True

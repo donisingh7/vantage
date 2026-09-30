@@ -62,7 +62,10 @@ async def client(sessions) -> AsyncIterator[AsyncClient]:
     # IsolatedTestSettings reads only field defaults (no env/.env/secret-file sources), and
     # the provider dependencies are pinned to the mocks, for every test regardless of the
     # ambient environment.
-    app.dependency_overrides[get_settings] = lambda: IsolatedTestSettings()
+    # embedding_dimensions matches the pinned mock provider below, as get_embedding_provider()
+    # would in production, so read paths that derive the configured embedding fingerprint
+    # from Settings (see app/services/embedding_fingerprint.py) agree with what was indexed.
+    app.dependency_overrides[get_settings] = lambda: IsolatedTestSettings(embedding_dimensions=16)
     app.dependency_overrides[get_llm_provider] = lambda: MockLLMProvider()
     app.dependency_overrides[get_embedding_provider] = lambda: MockEmbeddingProvider(dimensions=16)
     async with AsyncClient(

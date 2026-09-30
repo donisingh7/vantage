@@ -3,10 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight, ArrowDownRight, Building2, FileSearch, Globe2, RefreshCw, Sparkles, Tags } from "lucide-react";
-import {
-  ApiError, companiesApi, dashboardApi, getSystemInfo, ingestionApi, intelligenceApi, sourcesApi, topicsApi, workspaceApi,
-  type DashboardOverviewResponse, type FocusEntity, type IntelligenceSignal, type KeyCount, type RecentJob, type Source,
-} from "@/lib/api";
+import { ApiError, dashboardApi, type DashboardOverviewResponse, type IntelligenceSignal } from "@/lib/api";
 import { DistributionSkeleton, FocusListSkeleton, SignalListSkeleton, TimelineListSkeleton } from "@/components/loading/DashboardSkeleton";
 
 const SIGNAL_TYPE_LABELS: Record<string, string> = {
@@ -29,75 +26,6 @@ function formatCount(value: number | undefined): string {
   return value === undefined ? "—" : String(value).padStart(2, "0");
 }
 
-// -- DEPLOYMENT-TRANSITION COMPATIBILITY (temporary) --------------------------------
-//
-// Vercel deploys this frontend automatically on merge; the Lambda backend is deployed
-// manually. That means there is a real window where this build is live but production
-// Lambda does not yet expose GET /api/v1/dashboard/overview. Falling back to the old
-// seven-request loader ONLY on a genuine 404 keeps the dashboard usable during that
-// window without masking a real failure (any other error -- network, 500, auth, timeout --
-// must stay a visible failure, not silently trigger this path).
-//
-// Remove this whole block once the new endpoint is confirmed live in production.
-
-function countEntries<T>(items: T[], keyOf: (item: T) => string): KeyCount[] {
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    const key = keyOf(item);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([key, count]) => ({ key, count }));
-}
-
-function focusEntities(
-  signals: IntelligenceSignal[], field: "company_id" | "topic_id", namesById: Record<string, string>, limit = 3,
-): FocusEntity[] {
-  const counts = new Map<string, number>();
-  for (const signal of signals) {
-    const id = signal[field];
-    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, limit)
-    .map(([id, count]) => ({ id, name: namesById[id] ?? "Unknown", count }));
-}
-
-async function loadLegacyOverview(): Promise<DashboardOverviewResponse> {
-  const [systemInfo, summary, signalsResult, jobsResult, sources, companies, topics] = await Promise.all([
-    getSystemInfo(), workspaceApi.summary(), intelligenceApi.listSignals(), ingestionApi.listJobs(),
-    sourcesApi.list(), companiesApi.list(), topicsApi.list(),
-  ]);
-  const signals = signalsResult.items;
-  const sourcesById = Object.fromEntries(sources.items.map((source: Source) => [source.id, source]));
-  const companiesById = Object.fromEntries(companies.items.map((company) => [company.id, company.name]));
-  const topicsById = Object.fromEntries(topics.items.map((topic) => [topic.id, topic.name]));
-
-  const priority_signals = [...signals]
-    .sort((a, b) => b.importance_score - a.importance_score || b.analyzed_at.localeCompare(a.analyzed_at))
-    .slice(0, 3);
-  const latest_signals = [...signals].sort((a, b) => b.analyzed_at.localeCompare(a.analyzed_at)).slice(0, 3);
-
-  const recent_jobs: RecentJob[] = [...jobsResult.items]
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .slice(0, 5)
-    .map((job) => ({ ...job, source_name: sourcesById[job.source_id]?.name ?? "Unknown source" }));
-
-  return {
-    providers: { llm_provider: systemInfo.llm_provider, embedding_provider: systemInfo.embedding_provider },
-    summary,
-    priority_signals,
-    latest_signals,
-    signal_type_counts: countEntries(signals, (signal) => signal.signal_type ?? "other"),
-    sentiment_counts: countEntries(signals, (signal) => signal.sentiment ?? "neutral"),
-    recent_jobs,
-    focus_companies: focusEntities(signals, "company_id", companiesById),
-    focus_topics: focusEntities(signals, "topic_id", topicsById),
-  };
-}
-
-// -- End deployment-transition compatibility ----------------------------------------
-
 export function DashboardOverview() {
   const [connection, setConnection] = useState<"checking" | "connected" | "unavailable">("checking");
   const [data, setData] = useState<DashboardOverviewResponse | null>(null);
@@ -112,18 +40,6 @@ export function DashboardOverview() {
       setData(result);
       setConnection("connected");
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 404) {
-        try {
-          const legacy = await loadLegacyOverview();
-          setData(legacy);
-          setConnection("connected");
-          return;
-        } catch (legacyCause) {
-          setConnection("unavailable");
-          setError(legacyCause instanceof ApiError ? legacyCause.message : "Could not load the dashboard.");
-          return;
-        }
-      }
       setConnection("unavailable");
       setError(cause instanceof ApiError ? cause.message : "Could not load the dashboard.");
     }

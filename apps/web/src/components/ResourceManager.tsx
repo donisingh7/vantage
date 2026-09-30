@@ -41,14 +41,14 @@ function computeNextRun(job: CrawlJob | null | undefined, interval: IngestionInt
   return new Date(new Date(reference).getTime() + minutes * 60_000).toISOString();
 }
 
-// -- DEPLOYMENT-TRANSITION COMPATIBILITY (temporary) --------------------------------
+// -- Deployment compatibility fallback (404-only) ------------------------------------
 // Only used when GET /sources/management/view genuinely 404s (old Lambda, new frontend).
 // (Two path segments deliberately -- a single-segment /sources/management would collide
 // with the pre-Pass-3 GET /sources/{source_id} route and 422 instead of 404 on an old Lambda.)
 // Reconstructs the same shape from the two legacy calls it replaces. Since the old
 // backend never exposed whether the scheduler is actually enabled, this defaults to
 // false (matching current production config) rather than overclaiming automation.
-// Remove once the new endpoint is confirmed live in production.
+// Safe to delete once this endpoint is live on the deployed Lambda.
 async function loadLegacySources(search: string): Promise<{ items: SourceManagement[]; schedulerEnabled: boolean }> {
   const [sourcesResult, jobsResult] = await Promise.all([sourcesApi.list(search), ingestionApi.listJobs()]);
   const latestBySource: Record<string, CrawlJob> = {};
@@ -62,7 +62,7 @@ async function loadLegacySources(search: string): Promise<{ items: SourceManagem
     schedulerEnabled: false,
   };
 }
-// -- End deployment-transition compatibility ----------------------------------------
+// -- End deployment compatibility fallback ------------------------------------------
 
 async function load(kind: ResourceKind, search: string): Promise<{ items: RecordItem[]; schedulerEnabled: boolean }> {
   if (kind === "companies") return { items: (await companiesApi.list(search)).items, schedulerEnabled: false };

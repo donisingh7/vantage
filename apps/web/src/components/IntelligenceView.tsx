@@ -34,10 +34,10 @@ const SIGNAL_TYPE_OPTIONS: SignalType[] = [
   "regulation", "technology", "market", "pricing", "risk", "other",
 ];
 
-// -- DEPLOYMENT-TRANSITION COMPATIBILITY (temporary) --------------------------------
+// -- Deployment compatibility fallback (404-only) ------------------------------------
 // Only used when GET /intelligence/bootstrap genuinely 404s (old Lambda, new frontend).
 // Reconstructs the same shape from the six legacy calls it replaces.
-// Remove once the new endpoint is confirmed live in production.
+// Safe to delete once this endpoint is live on the deployed Lambda.
 async function loadLegacyBootstrap(): Promise<IntelligenceBootstrapResponse> {
   const [documentList, signalList, sourceList, companyList, topicList, systemInfo] = await Promise.all([
     documentsApi.list(), intelligenceApi.listSignals(), sourcesApi.list(), companiesApi.list(), topicsApi.list(), getSystemInfo(),
@@ -51,7 +51,7 @@ async function loadLegacyBootstrap(): Promise<IntelligenceBootstrapResponse> {
     topics: topicList.items.map((topic): CatalogEntry => ({ id: topic.id, name: topic.name })),
   };
 }
-// -- End deployment-transition compatibility ----------------------------------------
+// -- End deployment compatibility fallback ------------------------------------------
 
 export function IntelligenceView() {
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -115,6 +115,13 @@ export function IntelligenceView() {
   // requests, and a slower older one must never overwrite a newer filter's result. Only the
   // response whose sequence number still matches the latest dispatched request may commit.
   const filterRequestSeq = useRef(0);
+  // An action's own result is authoritative over any in-flight filter reload. Superseding
+  // that request must also clear its loading state -- the stale request's finally block
+  // deliberately won't, since its sequence no longer matches.
+  function invalidateFilterRequest() {
+    filterRequestSeq.current += 1;
+    setFilterLoading(false);
+  }
   async function reloadSignals() {
     const seq = ++filterRequestSeq.current;
     setFilterLoading(true); setError("");
@@ -149,7 +156,7 @@ export function IntelligenceView() {
   }
 
   function upsertSignals(returned: IntelligenceSignal[]) {
-    filterRequestSeq.current += 1; // an action's own result is authoritative over any in-flight filter reload
+    invalidateFilterRequest();
     setSignals((prev) => {
       const byId = new Map(prev.map((signal) => [signal.id, signal]));
       for (const signal of returned) {
@@ -271,19 +278,19 @@ export function IntelligenceView() {
         </div>
 
         <div className="filter-bar">
-          <select value={filterCompany} onChange={(event) => setFilterCompany(event.target.value)} aria-label="Filter by company">
+          <select value={filterCompany} disabled={loading} onChange={(event) => setFilterCompany(event.target.value)} aria-label="Filter by company">
             <option value="">All companies</option>
             {companies.map((company) => <option value={company.id} key={company.id}>{company.name}</option>)}
           </select>
-          <select value={filterTopic} onChange={(event) => setFilterTopic(event.target.value)} aria-label="Filter by topic">
+          <select value={filterTopic} disabled={loading} onChange={(event) => setFilterTopic(event.target.value)} aria-label="Filter by topic">
             <option value="">All topics</option>
             {topics.map((topic) => <option value={topic.id} key={topic.id}>{topic.name}</option>)}
           </select>
-          <select value={filterSignalType} onChange={(event) => setFilterSignalType(event.target.value)} aria-label="Filter by signal type">
+          <select value={filterSignalType} disabled={loading} onChange={(event) => setFilterSignalType(event.target.value)} aria-label="Filter by signal type">
             <option value="">All signal types</option>
             {SIGNAL_TYPE_OPTIONS.map((type) => <option value={type} key={type}>{SIGNAL_TYPE_LABELS[type]}</option>)}
           </select>
-          <select value={filterSentiment} onChange={(event) => setFilterSentiment(event.target.value)} aria-label="Filter by sentiment">
+          <select value={filterSentiment} disabled={loading} onChange={(event) => setFilterSentiment(event.target.value)} aria-label="Filter by sentiment">
             <option value="">All sentiment</option>
             {SENTIMENT_OPTIONS.map((sentiment) => <option value={sentiment} key={sentiment}>{sentiment}</option>)}
           </select>

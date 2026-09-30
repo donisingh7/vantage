@@ -22,12 +22,12 @@ function formatDate(value: string): string {
 
 type EntityKind = "company" | "topic";
 
-// -- DEPLOYMENT-TRANSITION COMPATIBILITY (temporary) --------------------------------
+// -- Deployment compatibility fallback (404-only) ------------------------------------
 // Only used when GET /intelligence/entities/{kind}/{id} genuinely 404s (old Lambda, new
 // frontend). Reconstructs the same shape from the four legacy calls it replaces, though
 // unlike the real endpoint it pulls every workspace source/document to resolve names --
 // an accepted cost of this being a temporary fallback, not the steady-state path.
-// Remove once the new endpoint is confirmed live in production.
+// Safe to delete once this endpoint is live on the deployed Lambda.
 async function loadLegacyEntity(kind: EntityKind, entityId: string): Promise<EntityIntelligenceResponse> {
   const filterParam = kind === "company" ? { company_id: entityId } : { topic_id: entityId };
   const [signalResult, watchlistResult, sourceList, documentList] = await Promise.all([
@@ -47,7 +47,7 @@ async function loadLegacyEntity(kind: EntityKind, entityId: string): Promise<Ent
     })),
   };
 }
-// -- End deployment-transition compatibility ----------------------------------------
+// -- End deployment compatibility fallback ------------------------------------------
 
 export function EntityIntelligenceDialog({
   kind, entity, onClose,
