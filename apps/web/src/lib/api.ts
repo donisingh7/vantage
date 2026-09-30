@@ -81,6 +81,22 @@ export type AskResponse = {
   answer: string; citations: AskCitation[]; retrieved_count: number; provider: string; grounded: boolean;
 };
 
+export type ProviderInfo = { llm_provider: string; embedding_provider: string };
+export type KeyCount = { key: string; count: number };
+export type RecentJob = CrawlJob & { source_name: string };
+export type FocusEntity = { id: string; name: string; count: number };
+export type DashboardOverviewResponse = {
+  providers: ProviderInfo;
+  summary: WorkspaceSummary;
+  priority_signals: IntelligenceSignal[];
+  latest_signals: IntelligenceSignal[];
+  signal_type_counts: KeyCount[];
+  sentiment_counts: KeyCount[];
+  recent_jobs: RecentJob[];
+  focus_companies: FocusEntity[];
+  focus_topics: FocusEntity[];
+};
+
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 export class ApiError extends Error {
@@ -132,6 +148,10 @@ function jsonBody(value: unknown): string {
 export function getSystemInfo(): Promise<SystemInfo> {
   return request<SystemInfo>("/api/v1/system/info");
 }
+
+export const dashboardApi = {
+  overview: () => request<DashboardOverviewResponse>("/api/v1/dashboard/overview"),
+};
 
 export const workspaceApi = {
   me: () => request<CurrentIdentity>("/api/v1/me"),
