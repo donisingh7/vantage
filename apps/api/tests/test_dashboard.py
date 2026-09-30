@@ -300,11 +300,116 @@ async def test_focus_topics_ranked_by_linked_completed_signal_count(client, sess
     assert focus[1]["id"] == topic_b["id"]
 
 
+# -- Detail lists stay bounded, aggregates do not -------------------------------------
+#
+# These specifically guard the Pass 2 correction: priority_signals/latest_signals must
+# stay capped at 3 (they're the only full-row fetches), while signal_type_counts,
+# sentiment_counts, and focus rankings must reflect the FULL completed-signal population,
+# not just whichever 3 rows happen to also appear in the detail lists.
+
+
+async def test_priority_signals_stay_bounded_to_three_with_more_signals_present(client, sessions):
+    workspace_id = await _workspace_id(client)
+    source = await _create_source(client)
+    scores = [0.1, 0.2, 0.3, 0.4, 0.9]
+    for score in scores:
+        doc = await _insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+        await _insert_signal(sessions, workspace_id=workspace_id, document_id=doc, importance=score)
+
+    response = await client.get(f"{API}/dashboard/overview")
+    priority = response.json()["priority_signals"]
+    assert len(priority) == 3
+    assert [item["importance_score"] for item in priority] == [0.9, 0.4, 0.3]
+
+
+async def test_latest_signals_stay_bounded_to_three_with_more_signals_present(client, sessions):
+    workspace_id = await _workspace_id(client)
+    source = await _create_source(client)
+    now = datetime.now(UTC)
+    for offset in range(5):
+        doc = await _insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+        await _insert_signal(sessions, workspace_id=workspace_id, document_id=doc, analyzed_at=now - timedelta(hours=offset))
+
+    response = await client.get(f"{API}/dashboard/overview")
+    latest = response.json()["latest_signals"]
+    assert len(latest) == 3
+
+
+async def test_distributions_count_the_full_signal_population_not_just_top_three(client, sessions):
+    workspace_id = await _workspace_id(client)
+    source = await _create_source(client)
+    for _ in range(5):
+        doc = await _insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+        await _insert_signal(sessions, workspace_id=workspace_id, document_id=doc, signal_type="funding", sentiment="positive")
+    for _ in range(2):
+        doc = await _insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+        await _insert_signal(sessions, workspace_id=workspace_id, document_id=doc, signal_type="leadership", sentiment="negative")
+
+    response = await client.get(f"{API}/dashboard/overview")
+    body = response.json()
+    type_counts = {item["key"]: item["count"] for item in body["signal_type_counts"]}
+    sentiment_counts = {item["key"]: item["count"] for item in body["sentiment_counts"]}
+    # 7 total completed signals, even though only 3 can ever appear in priority/latest.
+    assert type_counts == {"funding": 5, "leadership": 2}
+    assert sentiment_counts == {"positive": 5, "negative": 2}
+    assert len(body["priority_signals"]) == 3
+    assert len(body["latest_signals"]) == 3
+
+
+async def test_focus_ranking_counts_the_full_completed_signal_population(client, sessions):
+    workspace_id = await _workspace_id(client)
+    source = await _create_source(client)
+    company = (await client.post(f"{API}/companies", json={"name": "Company C"})).json()
+    for _ in range(5):
+        doc = await _insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+        await _insert_signal(sessions, workspace_id=workspace_id, document_id=doc, company_id=UUID(company["id"]))
+
+    response = await client.get(f"{API}/dashboard/overview")
+    focus = response.json()["focus_companies"]
+    # The true count (5) must show even though only 3 signals ever appear in priority/latest.
+    assert focus[0]["count"] == 5
+
+
+async def test_failed_and_irrelevant_signals_are_excluded_from_every_aggregate(client, sessions):
+    workspace_id = await _workspace_id(client)
+    source = await _create_source(client)
+    company = (await client.post(f"{API}/companies", json={"name": "Only Completed Co"})).json()
+
+    completed_doc = await _insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+    await _insert_signal(
+        sessions, workspace_id=workspace_id, document_id=completed_doc, importance=0.7,
+        company_id=UUID(company["id"]), status=AnalysisStatus.COMPLETED,
+    )
+    failed_doc = await _insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+    await _insert_signal(
+        sessions, workspace_id=workspace_id, document_id=failed_doc, importance=0.99,
+        company_id=UUID(company["id"]), status=AnalysisStatus.FAILED,
+    )
+    irrelevant_doc = await _insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+    await _insert_signal(
+        sessions, workspace_id=workspace_id, document_id=irrelevant_doc, importance=0.99,
+        company_id=UUID(company["id"]), status=AnalysisStatus.IRRELEVANT,
+    )
+
+    response = await client.get(f"{API}/dashboard/overview")
+    body = response.json()
+    assert len(body["priority_signals"]) == 1
+    assert body["priority_signals"][0]["importance_score"] == 0.7
+    assert len(body["latest_signals"]) == 1
+    assert sum(item["count"] for item in body["signal_type_counts"]) == 1
+    assert sum(item["count"] for item in body["sentiment_counts"]) == 1
+    assert body["focus_companies"][0]["count"] == 1
+
+
 # -- Workspace isolation -----------------------------------------------------------
 
 
 async def test_dashboard_overview_never_leaks_another_workspaces_data(client, sessions, other_workspace):
+    from app.models import Company as CompanyModel
+
     async with sessions() as session:
+        foreign_company = CompanyModel(workspace_id=other_workspace.id, name="Foreign Co")
+        session.add(foreign_company)
         foreign_source = Source(
             workspace_id=other_workspace.id, name="Foreign", url="https://foreign.example/feed",
             source_type=SourceType.WEBSITE,
@@ -323,6 +428,7 @@ async def test_dashboard_overview_never_leaks_another_workspaces_data(client, se
             analysis_status=AnalysisStatus.COMPLETED, analyzed_at=datetime.now(UTC),
             signal_type="funding", sentiment="positive", title="Foreign signal",
             relevance_score=0.9, importance_score=0.9, key_entities=[], key_points=[], confidence_score=0.9,
+            company_id=foreign_company.id,
         ))
         session.add(CrawlJob(
             workspace_id=other_workspace.id, source_id=foreign_source.id, status=CrawlJobStatus.COMPLETED,
@@ -334,11 +440,14 @@ async def test_dashboard_overview_never_leaks_another_workspaces_data(client, se
     assert response.status_code == 200
     body = response.json()
     assert body["summary"]["sources"] == 0
+    assert body["summary"]["companies"] == 0
     assert body["priority_signals"] == []
     assert body["latest_signals"] == []
     assert body["signal_type_counts"] == []
     assert body["sentiment_counts"] == []
     assert body["recent_jobs"] == []
+    assert body["focus_companies"] == []
+    assert body["focus_topics"] == []
 
 
 # -- No AI provider construction on this read path -----------------------------------
