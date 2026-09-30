@@ -6,15 +6,32 @@ from app.api.deps import (
     CompanyServiceDep,
     SourceServiceDep,
     TopicServiceDep,
+    WatchlistBootstrapServiceDep,
     WatchlistServiceDep,
 )
 from app.api.serialization import to_watchlist_detail, to_watchlist_read
 from app.models import Watchlist
 from app.schemas.common import ListResponse
-from app.schemas.watchlists import WatchlistCreate, WatchlistDetail, WatchlistRead, WatchlistUpdate
+from app.schemas.watchlists import (
+    WatchlistBootstrapResponse,
+    WatchlistCreate,
+    WatchlistDetail,
+    WatchlistRead,
+    WatchlistUpdate,
+)
 from app.services.watchlists import MemberKind
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
+
+
+@router.get("/bootstrap", response_model=WatchlistBootstrapResponse)
+async def read_watchlist_bootstrap(service: WatchlistBootstrapServiceDep) -> WatchlistBootstrapResponse:
+    """Everything the Watchlists page needs for its first render, in one request."""
+    data = await service.bootstrap()
+    return WatchlistBootstrapResponse(
+        watchlists=data.watchlists, companies=data.companies, topics=data.topics, sources=data.sources,
+        initial_detail=data.initial_detail,
+    )
 
 
 async def _detail(

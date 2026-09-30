@@ -5,7 +5,8 @@ import Link from "next/link";
 import { ExternalLink, MessageSquareText, X } from "lucide-react";
 import {
   ApiError, documentsApi, intelligenceApi, sourcesApi, watchlistsApi,
-  type Company, type Document, type IntelligenceSignal, type Source, type Topic, type Watchlist,
+  type CatalogEntry, type Company, type EntityDocumentRef, type EntityIntelligenceResponse, type IntelligenceSignal,
+  type Topic, type Watchlist,
 } from "@/lib/api";
 import { LoadingStatus, SkeletonLine } from "@/components/loading/Skeleton";
 
@@ -21,6 +22,33 @@ function formatDate(value: string): string {
 
 type EntityKind = "company" | "topic";
 
+// -- DEPLOYMENT-TRANSITION COMPATIBILITY (temporary) --------------------------------
+// Only used when GET /intelligence/entities/{kind}/{id} genuinely 404s (old Lambda, new
+// frontend). Reconstructs the same shape from the four legacy calls it replaces, though
+// unlike the real endpoint it pulls every workspace source/document to resolve names --
+// an accepted cost of this being a temporary fallback, not the steady-state path.
+// Remove once the new endpoint is confirmed live in production.
+async function loadLegacyEntity(kind: EntityKind, entityId: string): Promise<EntityIntelligenceResponse> {
+  const filterParam = kind === "company" ? { company_id: entityId } : { topic_id: entityId };
+  const [signalResult, watchlistResult, sourceList, documentList] = await Promise.all([
+    intelligenceApi.listSignals(filterParam), watchlistsApi.listContaining(filterParam), sourcesApi.list(), documentsApi.list(),
+  ]);
+  const usedDocumentIds = new Set(signalResult.items.map((signal) => signal.document_id));
+  const relevantDocuments = documentList.items.filter((document) => usedDocumentIds.has(document.id));
+  const usedSourceIds = new Set(relevantDocuments.map((document) => document.source_id));
+  return {
+    signals: signalResult.items,
+    watchlists: watchlistResult.items,
+    documents: relevantDocuments.map((document): EntityDocumentRef => ({
+      id: document.id, source_id: document.source_id, canonical_url: document.canonical_url,
+    })),
+    sources: sourceList.items.filter((source) => usedSourceIds.has(source.id)).map((source): CatalogEntry => ({
+      id: source.id, name: source.name,
+    })),
+  };
+}
+// -- End deployment-transition compatibility ----------------------------------------
+
 export function EntityIntelligenceDialog({
   kind, entity, onClose,
 }: {
@@ -28,27 +56,32 @@ export function EntityIntelligenceDialog({
 }) {
   const [signals, setSignals] = useState<IntelligenceSignal[]>([]);
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
-  const [sourcesById, setSourcesById] = useState<Record<string, Source>>({});
-  const [documentsById, setDocumentsById] = useState<Record<string, Document>>({});
+  const [sourcesById, setSourcesById] = useState<Record<string, string>>({});
+  const [documentsById, setDocumentsById] = useState<Record<string, EntityDocumentRef>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    const filterParam = kind === "company" ? { company_id: entity.id } : { topic_id: entity.id };
 
-    Promise.all([
-      intelligenceApi.listSignals(filterParam), watchlistsApi.listContaining(filterParam), sourcesApi.list(), documentsApi.list(),
-    ])
-      .then(([signalResult, watchlistResult, sourceList, documentList]) => {
-        if (!active) return;
-        setSignals(signalResult.items);
-        setWatchlists(watchlistResult.items);
-        setSourcesById(Object.fromEntries(sourceList.items.map((source) => [source.id, source])));
-        setDocumentsById(Object.fromEntries(documentList.items.map((document) => [document.id, document])));
-        setError("");
-      })
+    async function run() {
+      let data: EntityIntelligenceResponse;
+      try {
+        data = await intelligenceApi.entity(kind, entity.id);
+      } catch (cause) {
+        if (cause instanceof ApiError && cause.status === 404) data = await loadLegacyEntity(kind, entity.id);
+        else throw cause;
+      }
+      if (!active) return;
+      setSignals(data.signals);
+      setWatchlists(data.watchlists);
+      setSourcesById(Object.fromEntries(data.sources.map((source) => [source.id, source.name])));
+      setDocumentsById(Object.fromEntries(data.documents.map((document) => [document.id, document])));
+      setError("");
+    }
+
+    run()
       .catch((cause) => active && setError(cause instanceof ApiError ? cause.message : "Could not load intelligence."))
       .finally(() => active && setLoading(false));
 
@@ -167,14 +200,14 @@ export function EntityIntelligenceDialog({
   );
 }
 
-function SignalMiniRow({ signal, document, sourcesById }: { signal: IntelligenceSignal; document?: Document; sourcesById: Record<string, Source> }) {
-  const source = document ? sourcesById[document.source_id] : undefined;
+function SignalMiniRow({ signal, document, sourcesById }: { signal: IntelligenceSignal; document?: EntityDocumentRef; sourcesById: Record<string, string> }) {
+  const sourceName = document ? sourcesById[document.source_id] : undefined;
   return (
     <div className="signal-mini-row">
       <span className={`sentiment-tag sentiment-${signal.sentiment ?? "neutral"}`}>{SIGNAL_TYPE_LABELS[signal.signal_type ?? "other"]}</span>
       <div className="signal-mini-copy">
         <strong>{signal.title}</strong>
-        <span>{source?.name ?? "Unknown source"} · {formatDate(signal.analyzed_at)} · {Math.round(signal.importance_score * 100)}% importance</span>
+        <span>{sourceName ?? "Unknown source"} · {formatDate(signal.analyzed_at)} · {Math.round(signal.importance_score * 100)}% importance</span>
       </div>
       {document && (
         <a className="icon-action" href={document.canonical_url} target="_blank" rel="noopener noreferrer" aria-label="Open original source">

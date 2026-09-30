@@ -2,14 +2,17 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { Activity, ExternalLink, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
-import { ApiError, companiesApi, ingestionApi, sourcesApi, topicsApi, type Company, type CrawlJob, type IngestionInterval, type Source, type SourceType, type Topic } from "@/lib/api";
+import {
+  ApiError, companiesApi, ingestionApi, sourcesApi, topicsApi,
+  type Company, type CrawlJob, type IngestionInterval, type Source, type SourceManagement, type SourceType, type Topic,
+} from "@/lib/api";
 import { EntityIntelligenceDialog } from "@/components/EntityIntelligenceDialog";
 import { TableSkeleton } from "@/components/loading/TableSkeleton";
 
 const RESOURCE_TABLE_COLUMNS: Record<ResourceKind, number> = { companies: 5, topics: 4, sources: 8 };
 
 export type ResourceKind = "companies" | "topics" | "sources";
-type RecordItem = Company | Topic | Source;
+type RecordItem = Company | Topic | SourceManagement;
 type Values = { name: string; domain: string; description: string; url: string; source_type: SourceType; ingestion_interval: IngestionInterval };
 const initialValues = (): Values => ({ name: "", domain: "", description: "", url: "", source_type: "website", ingestion_interval: "manual" });
 const labels = { companies: "Company", topics: "Topic", sources: "Source" } as const;
@@ -31,17 +34,44 @@ function formatDateTime(value?: string | null): string {
   return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function computeNextRun(job: CrawlJob | undefined, interval: IngestionInterval): string | null {
+function computeNextRun(job: CrawlJob | null | undefined, interval: IngestionInterval): string | null {
   const minutes = INGESTION_INTERVAL_MINUTES[interval];
   const reference = job?.completed_at ?? job?.started_at;
   if (!minutes || !reference) return null;
   return new Date(new Date(reference).getTime() + minutes * 60_000).toISOString();
 }
 
-async function load(kind: ResourceKind, search: string): Promise<RecordItem[]> {
-  if (kind === "companies") return (await companiesApi.list(search)).items;
-  if (kind === "topics") return (await topicsApi.list(search)).items;
-  return (await sourcesApi.list(search)).items;
+// -- DEPLOYMENT-TRANSITION COMPATIBILITY (temporary) --------------------------------
+// Only used when GET /sources/management genuinely 404s (old Lambda, new frontend).
+// Reconstructs the same shape from the two legacy calls it replaces. Since the old
+// backend never exposed whether the scheduler is actually enabled, this defaults to
+// false (matching current production config) rather than overclaiming automation.
+// Remove once the new endpoint is confirmed live in production.
+async function loadLegacySources(search: string): Promise<{ items: SourceManagement[]; schedulerEnabled: boolean }> {
+  const [sourcesResult, jobsResult] = await Promise.all([sourcesApi.list(search), ingestionApi.listJobs()]);
+  const latestBySource: Record<string, CrawlJob> = {};
+  for (const job of jobsResult.items) {
+    if (!latestBySource[job.source_id] || job.created_at.localeCompare(latestBySource[job.source_id].created_at) > 0) {
+      latestBySource[job.source_id] = job;
+    }
+  }
+  return {
+    items: sourcesResult.items.map((source) => ({ ...source, latest_job: latestBySource[source.id] ?? null })),
+    schedulerEnabled: false,
+  };
+}
+// -- End deployment-transition compatibility ----------------------------------------
+
+async function load(kind: ResourceKind, search: string): Promise<{ items: RecordItem[]; schedulerEnabled: boolean }> {
+  if (kind === "companies") return { items: (await companiesApi.list(search)).items, schedulerEnabled: false };
+  if (kind === "topics") return { items: (await topicsApi.list(search)).items, schedulerEnabled: false };
+  try {
+    const result = await sourcesApi.management(search);
+    return { items: result.items, schedulerEnabled: result.scheduler_enabled };
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 404) return await loadLegacySources(search);
+    throw cause;
+  }
 }
 
 function valuesOf(item: RecordItem): Values {
@@ -71,6 +101,7 @@ async function save(kind: ResourceKind, id: string | null, values: Values) {
 
 export function ResourceManager({ kind }: { kind: ResourceKind }) {
   const [items, setItems] = useState<RecordItem[]>([]);
+  const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -80,36 +111,27 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<RecordItem | null>(null);
   const [busy, setBusy] = useState(false);
-  const [jobsBySource, setJobsBySource] = useState<Record<string, CrawlJob>>({});
   const [ingesting, setIngesting] = useState<string | null>(null);
   const [viewingEntity, setViewingEntity] = useState<Company | Topic | null>(null);
 
   async function refresh(query = search) {
     setLoading(true);
     try {
-      setItems(await load(kind, query));
+      const result = await load(kind, query);
+      setItems(result.items);
+      setSchedulerEnabled(result.schedulerEnabled);
       setError("");
-      if (kind === "sources") await refreshJobs();
     }
     catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not load records."); }
     finally { setLoading(false); }
   }
   useEffect(() => { void refresh(""); }, [kind]);
 
-  async function refreshJobs() {
-    try {
-      const jobs = (await ingestionApi.listJobs()).items;
-      const latest: Record<string, CrawlJob> = {};
-      for (const job of jobs) if (!latest[job.source_id]) latest[job.source_id] = job;
-      setJobsBySource(latest);
-    } catch { /* last-ingestion status is a convenience; ignore failures here */ }
-  }
-
-  async function runIngestion(source: Source) {
+  async function runIngestion(source: SourceManagement) {
     setIngesting(source.id); setError("");
     try {
       const job = await ingestionApi.run(source.id);
-      setJobsBySource((prev) => ({ ...prev, [source.id]: job }));
+      setItems((prev) => prev.map((item) => (item.id === source.id ? { ...(item as SourceManagement), latest_job: job } : item)));
       setNotice(
         job.status === "completed"
           ? `Ingestion completed for ${source.name}: ${job.documents_created} new of ${job.documents_found} found.`
@@ -126,8 +148,20 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setSaving(true); setError("");
     try {
-      await save(kind, editing && editing !== null ? editing.id : null, values);
-      setEditing(undefined); setNotice(`${labels[kind]} ${editing ? "updated" : "created"}.`); await refresh();
+      const wasEditing = editing && editing !== null ? editing : null;
+      const result = await save(kind, wasEditing ? wasEditing.id : null, values);
+      if (wasEditing) {
+        // The update response has no enriched watchlist_count (it's not a DB column), so
+        // keep the value already known locally instead of silently zeroing it; same for a
+        // source's latest_job, which editing name/url/etc never changes.
+        setItems((prev) => prev.map((item) => (item.id === wasEditing.id
+          ? { ...item, ...result, watchlist_count: item.watchlist_count, ...("latest_job" in item ? { latest_job: (item as SourceManagement).latest_job } : {}) }
+          : item)));
+      } else {
+        const created = kind === "sources" ? { ...(result as Source), latest_job: null } : result;
+        setItems((prev) => [...prev, created as RecordItem].sort((a, b) => a.name.localeCompare(b.name)));
+      }
+      setEditing(undefined); setNotice(`${labels[kind]} ${wasEditing ? "updated" : "created"}.`);
     } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not save this record."); }
     finally { setSaving(false); }
   }
@@ -139,14 +173,21 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
       if (kind === "companies") await companiesApi.delete(deleting.id);
       else if (kind === "topics") await topicsApi.delete(deleting.id);
       else await sourcesApi.delete(deleting.id);
-      setDeleting(null); setNotice(`${labels[kind]} deleted.`); await refresh();
+      setItems((prev) => prev.filter((item) => item.id !== deleting.id));
+      setDeleting(null); setNotice(`${labels[kind]} deleted.`);
     } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not delete this record."); }
     finally { setBusy(false); }
   }
 
-  async function toggleSource(source: Source) {
+  async function toggleSource(source: SourceManagement) {
     setBusy(true);
-    try { await sourcesApi.update(source.id, { is_active: !source.is_active }); setNotice(`Source ${source.is_active ? "paused" : "activated"}.`); await refresh(); }
+    try {
+      const updated = await sourcesApi.update(source.id, { is_active: !source.is_active });
+      setItems((prev) => prev.map((item) => (item.id === source.id
+        ? { ...item, ...updated, watchlist_count: item.watchlist_count, latest_job: (item as SourceManagement).latest_job }
+        : item)));
+      setNotice(`Source ${source.is_active ? "paused" : "activated"}.`);
+    }
     catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not update source."); }
     finally { setBusy(false); }
   }
@@ -165,8 +206,8 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
     {loading ? <TableSkeleton columns={RESOURCE_TABLE_COLUMNS[kind]} label={`Loading ${kind}`} /> : items.length === 0 ? <div className="empty-surface"><div className="empty-symbol"><Plus size={19} /></div><h2>{search ? "No matches found" : "A clear space to start"}</h2><p>{search ? "Try another search." : `No ${kind} yet. Add one to get started.`}</p>{!search && <button className="secondary-button" onClick={() => openForm()}>Add first {labels[kind].toLowerCase()}</button>}</div> : <div className="table-wrap content-fade-in"><table className="resource-table"><thead><tr>{(kind === "companies" ? ["Company", "Domain", "Description", "Watchlists"] : kind === "topics" ? ["Topic", "Description", "Watchlists"] : ["Source", "Type", "URL", "Watchlists", "Status", "Last ingestion", "Schedule"]).map((column) => <th key={column}>{column}</th>)}<th><span className="visually-hidden">Actions</span></th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.name}</strong></td>
       {kind === "companies" && <><td className="muted-cell">{(item as Company).domain || "—"}</td><td className="description-cell">{(item as Company).description || "—"}</td><td><span className="count-tag">{item.watchlist_count}</span></td></>}
       {kind === "topics" && <><td className="description-cell">{(item as Topic).description || "—"}</td><td><span className="count-tag">{item.watchlist_count}</span></td></>}
-      {kind === "sources" && <><td><span className="type-tag">{(item as Source).source_type}</span></td><td><a className="external-source" href={(item as Source).url} target="_blank" rel="noopener noreferrer">{(item as Source).url}<ExternalLink size={12} /></a></td><td><span className="count-tag">{item.watchlist_count}</span></td><td><button className={`status-toggle ${(item as Source).is_active ? "status-on" : "status-off"}`} disabled={busy} onClick={() => void toggleSource(item as Source)}><span />{(item as Source).is_active ? "Active" : "Paused"}</button></td><td><IngestionStatus job={jobsBySource[item.id]} /></td><td><ScheduleCell source={item as Source} job={jobsBySource[item.id]} /></td></>}
-      <td><div className="row-actions">{(kind === "companies" || kind === "topics") && <button className="icon-action" aria-label={`View intelligence for ${item.name}`} title="View intelligence" onClick={() => setViewingEntity(item as Company | Topic)}><Activity size={15} /></button>}{kind === "sources" && <button className="icon-action" aria-label={`Run ingestion for ${item.name}`} title="Run ingestion" disabled={ingesting === item.id} aria-busy={ingesting === item.id} onClick={() => void runIngestion(item as Source)}><RefreshCw size={15} className={ingesting === item.id ? "spin-icon" : ""} /></button>}<button className="icon-action" aria-label={`Edit ${item.name}`} title="Edit" onClick={() => openForm(item)}><Pencil size={15} /></button><button className="icon-action action-danger" aria-label={`Delete ${item.name}`} title="Delete" onClick={() => setDeleting(item)}><Trash2 size={15} /></button></div></td></tr>)}</tbody></table></div>}
+      {kind === "sources" && <><td><span className="type-tag">{(item as SourceManagement).source_type}</span></td><td><a className="external-source" href={(item as SourceManagement).url} target="_blank" rel="noopener noreferrer">{(item as SourceManagement).url}<ExternalLink size={12} /></a></td><td><span className="count-tag">{item.watchlist_count}</span></td><td><button className={`status-toggle ${(item as SourceManagement).is_active ? "status-on" : "status-off"}`} disabled={busy} onClick={() => void toggleSource(item as SourceManagement)}><span />{(item as SourceManagement).is_active ? "Active" : "Paused"}</button></td><td><IngestionStatus job={(item as SourceManagement).latest_job} /></td><td><ScheduleCell source={item as SourceManagement} job={(item as SourceManagement).latest_job} schedulerEnabled={schedulerEnabled} /></td></>}
+      <td><div className="row-actions">{(kind === "companies" || kind === "topics") && <button className="icon-action" aria-label={`View intelligence for ${item.name}`} title="View intelligence" onClick={() => setViewingEntity(item as Company | Topic)}><Activity size={15} /></button>}{kind === "sources" && <button className="icon-action" aria-label={`Run ingestion for ${item.name}`} title="Run ingestion" disabled={ingesting === item.id} aria-busy={ingesting === item.id} onClick={() => void runIngestion(item as SourceManagement)}><RefreshCw size={15} className={ingesting === item.id ? "spin-icon" : ""} /></button>}<button className="icon-action" aria-label={`Edit ${item.name}`} title="Edit" onClick={() => openForm(item)}><Pencil size={15} /></button><button className="icon-action action-danger" aria-label={`Delete ${item.name}`} title="Delete" onClick={() => setDeleting(item)}><Trash2 size={15} /></button></div></td></tr>)}</tbody></table></div>}
     {editing !== undefined && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditing(undefined); }}><section className="form-dialog" role="dialog" aria-modal="true" aria-labelledby="record-dialog-title"><header><div><span className="section-kicker">{editing ? "EDIT RECORD" : "NEW RECORD"}</span><h2 id="record-dialog-title">{editing ? `Edit ${editing.name}` : `Add ${labels[kind].toLowerCase()}`}</h2></div><button className="icon-action" aria-label="Close dialog" disabled={saving} onClick={() => setEditing(undefined)}><X size={18} /></button></header><form onSubmit={(event) => void submit(event)}>{fields.map((field) => <label className="form-field" key={field.key}><span>{field.label}{field.required && <i> *</i>}</span>{field.key === "source_type" ? <select value={values.source_type} onChange={(event) => setValues({ ...values, source_type: event.target.value as SourceType })}><option value="website">Website</option><option value="rss">RSS</option><option value="news">News</option><option value="blog">Blog</option><option value="other">Other</option></select> : field.key === "ingestion_interval" ? <select value={values.ingestion_interval} onChange={(event) => setValues({ ...values, ingestion_interval: event.target.value as IngestionInterval })}>{(Object.keys(INGESTION_INTERVAL_LABELS) as IngestionInterval[]).map((interval) => <option value={interval} key={interval}>{INGESTION_INTERVAL_LABELS[interval]}</option>)}</select> : field.multiline ? <textarea rows={4} value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} /> : <input required={field.required} type={field.key === "url" ? "url" : "text"} value={values[field.key as keyof Values] as string} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} placeholder={field.key === "url" ? "https://example.com/news" : field.key === "domain" ? "example.com" : ""} />}</label>)}{error && <p className="dialog-error" role="alert">{error}</p>}<footer><button className="secondary-button" type="button" disabled={saving} onClick={() => setEditing(undefined)}>Cancel</button><button className="primary-button" type="submit" disabled={saving} aria-busy={saving}>{saving ? <RefreshCw size={14} className="spin-icon" /> : null}{saving ? "Saving..." : editing ? "Save changes" : "Create"}</button></footer></form></section></div>}
     {deleting && <div className="dialog-backdrop"><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><span className="section-kicker">DELETE RECORD</span><h2 id="delete-title">Delete {deleting.name}?</h2><p>This record will be removed from this workspace and its watchlist memberships will be cleared.</p>{error && <p className="dialog-error" role="alert">{error}</p>}<footer><button className="secondary-button" disabled={busy} onClick={() => setDeleting(null)}>Cancel</button><button className="danger-button" disabled={busy} aria-busy={busy} onClick={() => void remove()}>{busy ? <RefreshCw size={14} className="spin-icon" /> : null}{busy ? "Deleting..." : "Delete"}</button></footer></section></div>}
     {viewingEntity && (kind === "companies" || kind === "topics") && (
@@ -175,7 +216,7 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
   </section>;
 }
 
-function IngestionStatus({ job }: { job?: CrawlJob }) {
+function IngestionStatus({ job }: { job?: CrawlJob | null }) {
   if (!job) return <span className="ingestion-status ingestion-none">Not run yet</span>;
   const lastRun = formatDateTime(job.completed_at ?? job.started_at);
   if (job.status === "completed") {
@@ -187,12 +228,14 @@ function IngestionStatus({ job }: { job?: CrawlJob }) {
   return <span className="ingestion-status ingestion-running">{job.status[0].toUpperCase() + job.status.slice(1)}</span>;
 }
 
-function ScheduleCell({ source, job }: { source: Source; job?: CrawlJob }) {
-  const nextRun = computeNextRun(job, source.ingestion_interval);
+function ScheduleCell({ source, job, schedulerEnabled }: { source: Source; job?: CrawlJob | null; schedulerEnabled: boolean }) {
+  const nextRun = schedulerEnabled ? computeNextRun(job, source.ingestion_interval) : null;
   return (
     <span className="ingestion-status-stack">
-      <span>{INGESTION_INTERVAL_LABELS[source.ingestion_interval]}</span>
-      {nextRun && <small className="ingestion-last-run">Next {formatDateTime(nextRun)}</small>}
+      <span>Configured: {INGESTION_INTERVAL_LABELS[source.ingestion_interval]}</span>
+      {schedulerEnabled
+        ? nextRun && <small className="ingestion-last-run">Next {formatDateTime(nextRun)}</small>
+        : <small className="ingestion-last-run">Automation disabled in this live demo</small>}
     </span>
   );
 }

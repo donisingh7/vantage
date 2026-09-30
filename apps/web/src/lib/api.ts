@@ -97,6 +97,39 @@ export type DashboardOverviewResponse = {
   focus_topics: FocusEntity[];
 };
 
+// -- Pass 3: page-level bootstrap/management/entity read shapes --------------------
+
+export type CatalogEntry = { id: string; name: string };
+export type CatalogSource = { id: string; name: string; url: string };
+
+export type SourceManagement = Source & { latest_job: CrawlJob | null };
+export type SourcesManagementResponse = { items: SourceManagement[]; total: number; scheduler_enabled: boolean };
+
+export type WatchlistBootstrapResponse = {
+  watchlists: Watchlist[];
+  companies: CatalogEntry[];
+  topics: CatalogEntry[];
+  sources: CatalogSource[];
+  initial_detail: WatchlistDetail | null;
+};
+
+export type IntelligenceBootstrapResponse = {
+  providers: ProviderInfo;
+  documents: Document[];
+  signals: IntelligenceSignal[];
+  sources: CatalogEntry[];
+  companies: CatalogEntry[];
+  topics: CatalogEntry[];
+};
+
+export type EntityDocumentRef = { id: string; source_id: string; canonical_url: string };
+export type EntityIntelligenceResponse = {
+  signals: IntelligenceSignal[];
+  watchlists: Watchlist[];
+  documents: EntityDocumentRef[];
+  sources: CatalogEntry[];
+};
+
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 export class ApiError extends Error {
@@ -182,6 +215,7 @@ export const topicsApi = {
 
 export const sourcesApi = {
   list: (search?: string) => request<ListResponse<Source>>(queryPath("/api/v1/sources", search)),
+  management: (search?: string) => request<SourcesManagementResponse>(queryPath("/api/v1/sources/management", search)),
   get: (id: string) => request<Source>(`/api/v1/sources/${id}`),
   create: (data: { name: string; url: string; source_type: SourceType; is_active?: boolean; ingestion_interval?: IngestionInterval }) =>
     request<Source>("/api/v1/sources", { method: "POST", body: jsonBody(data) }),
@@ -191,6 +225,7 @@ export const sourcesApi = {
 };
 
 export const watchlistsApi = {
+  bootstrap: () => request<WatchlistBootstrapResponse>("/api/v1/watchlists/bootstrap"),
   list: (search?: string) => request<ListResponse<Watchlist>>(queryPath("/api/v1/watchlists", search)),
   listContaining: (params: { company_id?: string; topic_id?: string }) => {
     const query = new URLSearchParams();
@@ -242,6 +277,9 @@ export const askApi = {
 };
 
 export const intelligenceApi = {
+  bootstrap: () => request<IntelligenceBootstrapResponse>("/api/v1/intelligence/bootstrap"),
+  entity: (kind: "company" | "topic", entityId: string) =>
+    request<EntityIntelligenceResponse>(`/api/v1/intelligence/entities/${kind}/${entityId}`),
   analyzePending: (limit = 5) =>
     request<{ analyzed: number; signals: IntelligenceSignal[] }>("/api/v1/intelligence/analyze-pending", {
       method: "POST",

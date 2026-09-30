@@ -2,7 +2,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.common import EntityBase
+from app.schemas.common import CatalogEntryRead, CatalogSourceRead, EntityBase
 from app.schemas.companies import CompanyRead
 from app.schemas.normalizers import normalize_text
 from app.schemas.sources import SourceRead
@@ -51,3 +51,16 @@ class WatchlistDetail(WatchlistRead):
     companies: list[CompanyRead]
     topics: list[TopicRead]
     sources: list[SourceRead]
+
+
+class WatchlistBootstrapResponse(BaseModel):
+    """Everything the Watchlists page needs for its first render, in one request:
+    the watchlist list plus the narrow (id/name[/url]) catalogs its member selectors need,
+    plus the full detail of the default (first, alphabetically) watchlist when one exists.
+    """
+
+    watchlists: list[WatchlistRead]
+    companies: list[CatalogEntryRead]
+    topics: list[CatalogEntryRead]
+    sources: list[CatalogSourceRead]
+    initial_detail: WatchlistDetail | None = None

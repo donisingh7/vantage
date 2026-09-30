@@ -269,3 +269,31 @@ async def test_analyze_pending_processes_only_up_to_limit(client, sessions):
 
     second_pass = await client.post(f"{API}/intelligence/analyze-pending", json={"limit": 5})
     assert second_pass.json()["analyzed"] == 1
+
+
+# -- Read-only signal endpoints need no LLM/embedding provider ----------------
+
+
+async def test_list_and_get_signals_never_construct_llm_or_embedding_provider(client, sessions):
+    """GET /intelligence/signals and GET /intelligence/signals/{id} now use
+    IntelligenceReadService, not IntelligenceAnalysisService -- they must work even if
+    constructing an LLM/embedding provider would fail. POST /analyze-pending (the write
+    path) is intentionally NOT covered here -- it still needs a real provider."""
+    from app.api.deps import get_embedding_provider, get_llm_provider
+    from app.main import app
+
+    source = await create_source(client)
+    workspace_id = UUID((await client.get(f"{API}/me")).json()["workspace"]["id"])
+    document_id = await insert_document(sessions, workspace_id=workspace_id, source_id=UUID(source["id"]))
+    signal = (await client.post(f"{API}/documents/{document_id}/analyze")).json()
+
+    def _poison():
+        raise AssertionError("read-only signal endpoints must not construct an LLM/embedding provider")
+
+    app.dependency_overrides[get_llm_provider] = _poison
+    app.dependency_overrides[get_embedding_provider] = _poison
+
+    listed = await client.get(f"{API}/intelligence/signals")
+    assert listed.status_code == 200
+    single = await client.get(f"{API}/intelligence/signals/{signal['id']}")
+    assert single.status_code == 200
