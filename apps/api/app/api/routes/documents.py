@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import IndexingServiceDep, IngestionServiceDep, IntelligenceAnalysisServiceDep
+from app.api.deps import DocumentReadServiceDep, IndexingServiceDep, IntelligenceAnalysisServiceDep
 from app.schemas.common import ListResponse
 from app.schemas.ingestion import DocumentRead
 from app.schemas.intelligence import IntelligenceSignalRead
@@ -13,23 +13,10 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.get("", response_model=ListResponse[DocumentRead])
 async def list_documents(
-    service: IngestionServiceDep,
-    analysis: IntelligenceAnalysisServiceDep,
-    indexing: IndexingServiceDep,
-    source_id: UUID | None = Query(default=None),
+    service: DocumentReadServiceDep, source_id: UUID | None = Query(default=None)
 ) -> ListResponse[DocumentRead]:
-    documents = await service.list_documents(source_id)
-    signals = await analysis.signals_by_document([document.id for document in documents])
-    items = [
-        DocumentRead.model_validate(document).model_copy(
-            update={
-                "analysis_status": signals[document.id].analysis_status.value if document.id in signals else None,
-                "signal_id": signals[document.id].id if document.id in signals else None,
-                "indexed": indexing.is_current(document),
-            }
-        )
-        for document in documents
-    ]
+    """Read-only: constructs no LLM/embedding provider (unlike the analyze/index write routes below)."""
+    items = await service.list(source_id)
     return ListResponse(items=items, total=len(items))
 
 

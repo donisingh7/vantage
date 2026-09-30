@@ -2,13 +2,18 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.schemas.common import ProviderInfo
 from app.schemas.ingestion import CrawlJobRead
 from app.schemas.intelligence import IntelligenceSignalRead
 
-
-class ProviderInfo(BaseModel):
-    llm_provider: str
-    embedding_provider: str
+__all__ = [
+    "DashboardOverviewResponse",
+    "DashboardSummaryRead",
+    "FocusEntityRead",
+    "KeyCountRead",
+    "ProviderInfo",
+    "RecentJobRead",
+]
 
 
 class DashboardSummaryRead(BaseModel):

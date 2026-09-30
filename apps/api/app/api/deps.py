@@ -20,13 +20,19 @@ from app.providers.llm import (
 )
 from app.services.ask_vantage import AskVantageService
 from app.services.companies import CompanyService
+from app.services.document_read import DocumentReadService
+from app.services.entity_intelligence import EntityIntelligenceService
 from app.services.fetching import HttpxSourceFetcher, PlaywrightBrowserFetcher, SourceFetcher
 from app.services.indexing import DocumentIndexingService
 from app.services.ingestion import IngestionService
 from app.services.intelligence_analysis import IntelligenceAnalysisService
+from app.services.intelligence_bootstrap import IntelligenceBootstrapService
+from app.services.intelligence_read import IntelligenceReadService
 from app.services.semantic_search import SemanticSearchService
+from app.services.source_management import SourceManagementService
 from app.services.sources import SourceService
 from app.services.topics import TopicService
+from app.services.watchlist_bootstrap import WatchlistBootstrapService
 from app.services.watchlists import WatchlistService
 from app.services.workspace import WorkspaceContext, resolve_workspace_context
 
@@ -168,3 +174,51 @@ TopicServiceDep = Annotated[TopicService, Depends(get_topic_service)]
 SourceServiceDep = Annotated[SourceService, Depends(get_source_service)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 IntelligenceAnalysisServiceDep = Annotated[IntelligenceAnalysisService, Depends(get_intelligence_service)]
+
+
+def get_intelligence_read_service(session: SessionDep, context: WorkspaceContextDep) -> IntelligenceReadService:
+    """No LLMProvider dependency -- see IntelligenceReadService's module docstring."""
+    return IntelligenceReadService(session, context.workspace.id)
+
+
+IntelligenceReadServiceDep = Annotated[IntelligenceReadService, Depends(get_intelligence_read_service)]
+
+
+def get_source_management_service(session: SessionDep, context: WorkspaceContextDep) -> SourceManagementService:
+    return SourceManagementService(session, context.workspace.id)
+
+
+SourceManagementServiceDep = Annotated[SourceManagementService, Depends(get_source_management_service)]
+
+
+def get_watchlist_bootstrap_service(session: SessionDep, context: WorkspaceContextDep) -> WatchlistBootstrapService:
+    return WatchlistBootstrapService(session, context.workspace.id)
+
+
+WatchlistBootstrapServiceDep = Annotated[WatchlistBootstrapService, Depends(get_watchlist_bootstrap_service)]
+
+
+def get_intelligence_bootstrap_service(
+    session: SessionDep, context: WorkspaceContextDep, settings: Annotated[Settings, Depends(get_settings)]
+) -> IntelligenceBootstrapService:
+    return IntelligenceBootstrapService(session, context.workspace.id, settings)
+
+
+IntelligenceBootstrapServiceDep = Annotated[IntelligenceBootstrapService, Depends(get_intelligence_bootstrap_service)]
+
+
+def get_document_read_service(
+    session: SessionDep, context: WorkspaceContextDep, settings: Annotated[Settings, Depends(get_settings)]
+) -> DocumentReadService:
+    """No LLM/embedding provider dependency -- see DocumentReadService's module docstring."""
+    return DocumentReadService(session, context.workspace.id, settings)
+
+
+DocumentReadServiceDep = Annotated[DocumentReadService, Depends(get_document_read_service)]
+
+
+def get_entity_intelligence_service(session: SessionDep, context: WorkspaceContextDep) -> EntityIntelligenceService:
+    return EntityIntelligenceService(session, context.workspace.id)
+
+
+EntityIntelligenceServiceDep = Annotated[EntityIntelligenceService, Depends(get_entity_intelligence_service)]

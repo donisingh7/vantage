@@ -2,16 +2,16 @@
 
 ## Current Architecture
 
-Vantage is a small monorepo: a Next.js web app and a FastAPI API, talking over HTTP. SQLite is the current system of record (see [Data Store](../README.md#data-store) in the README for the PostgreSQL/pgvector path). There is no message broker, no worker process, and no deployment infrastructure in this repository.
+Vantage is a small monorepo: a Next.js web app and a FastAPI API, talking over HTTP. Production runs the web app on Vercel and the API on AWS Lambda behind API Gateway, backed by Supabase PostgreSQL; production AI paths use Gemini through the provider abstractions, while local development uses SQLite and mock providers by default (see the [README](../README.md) for the deployment overview). There is no message broker and no worker process.
 
 ```text
 Browser
-  | Next.js App Router + shared API client (src/lib/api.ts)
+  | Next.js App Router + shared API client (src/lib/api.ts)   -- Vercel (bom1)
   v
-FastAPI /api/v1
+FastAPI /api/v1                                               -- API Gateway + Lambda (ap-south-1)
   | async SQLAlchemy services, all workspace-scoped
   v
-SQLite (sqlite+aiosqlite) -- PostgreSQL-compatible DATABASE_URL, not yet PostgreSQL-specific
+PostgreSQL (production, Supabase) / SQLite (local development and tests)
 ```
 
 ## Request Flow: Source to Answer
@@ -45,7 +45,7 @@ Nothing in this chain runs automatically end to end: ingestion, analysis, and in
 
 ## Provider Abstractions
 
-`LLMProvider` (`generate`, `structured_generate`) and `EmbeddingProvider` (`embed_text`, `embed_documents`) are the only two interfaces the rest of the codebase depends on. `MockLLMProvider` and `MockEmbeddingProvider` are deterministic and make no network calls; `AzureOpenAILLMProvider` and `AzureOpenAIEmbeddingProvider` implement the same interfaces against real Azure OpenAI (see the README's [Provider Modes](../README.md#provider-modes)). `EmbeddingProvider` is intentionally synchronous (not async) -- the real adapter uses the synchronous OpenAI SDK client to match it exactly, rather than changing the interface everywhere embeddings are used, since embedding calls are infrequent relative to request handling. Real-provider failures are wrapped into a `provider_error` (502) with a generic message; the raw SDK exception is never echoed back to the client.
+`LLMProvider` (`generate`, `structured_generate`) and `EmbeddingProvider` (`embed_text`, `embed_documents`) are the only two interfaces the rest of the codebase depends on. `MockLLMProvider` and `MockEmbeddingProvider` are deterministic and make no network calls; `GeminiLLMProvider` / `GeminiEmbeddingProvider` and `AzureOpenAILLMProvider` / `AzureOpenAIEmbeddingProvider` implement the same interfaces against real providers (see the README's [Provider Modes](../README.md#provider-modes)). Production is configured for Gemini. `EmbeddingProvider` is intentionally synchronous (not async); the real Gemini and Azure adapters use synchronous SDK clients to match that interface rather than changing embedding call sites throughout the application. Real-provider failures are wrapped into a `provider_error` (502) with a generic message; raw SDK exceptions are never echoed back to the client.
 
 `app/api/deps.py` is the single place that decides mock vs. real per request, from `Settings.llm_provider` / `Settings.embedding_provider`. Nothing else in a route or service branches on provider mode.
 

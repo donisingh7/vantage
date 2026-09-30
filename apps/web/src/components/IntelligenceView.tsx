@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, Layers, MessageSquareText, Sparkles, X } from "lucide-react";
+import { ExternalLink, Layers, MessageSquareText, RefreshCw, Sparkles, X } from "lucide-react";
 import {
   ApiError, companiesApi, documentsApi, getSystemInfo, intelligenceApi, searchApi, sourcesApi, topicsApi,
-  type Company, type Document, type IntelligenceSignal, type Sentiment, type SignalType, type Source, type Topic,
+  type CatalogEntry, type Document, type IndexResult, type IntelligenceBootstrapResponse, type IntelligenceSignal,
+  type Sentiment, type SignalType,
 } from "@/lib/api";
 import { CardGridSkeleton, DocumentListSkeleton } from "@/components/loading/CardGridSkeleton";
 
@@ -33,16 +34,33 @@ const SIGNAL_TYPE_OPTIONS: SignalType[] = [
   "regulation", "technology", "market", "pricing", "risk", "other",
 ];
 
+// -- Deployment compatibility fallback (404-only) ------------------------------------
+// Only used when GET /intelligence/bootstrap genuinely 404s (old Lambda, new frontend).
+// Reconstructs the same shape from the six legacy calls it replaces.
+// Safe to delete once this endpoint is live on the deployed Lambda.
+async function loadLegacyBootstrap(): Promise<IntelligenceBootstrapResponse> {
+  const [documentList, signalList, sourceList, companyList, topicList, systemInfo] = await Promise.all([
+    documentsApi.list(), intelligenceApi.listSignals(), sourcesApi.list(), companiesApi.list(), topicsApi.list(), getSystemInfo(),
+  ]);
+  return {
+    providers: { llm_provider: systemInfo.llm_provider, embedding_provider: systemInfo.embedding_provider },
+    documents: documentList.items,
+    signals: signalList.items,
+    sources: sourceList.items.map((source): CatalogEntry => ({ id: source.id, name: source.name })),
+    companies: companyList.items.map((company): CatalogEntry => ({ id: company.id, name: company.name })),
+    topics: topicList.items.map((topic): CatalogEntry => ({ id: topic.id, name: topic.name })),
+  };
+}
+// -- End deployment compatibility fallback ------------------------------------------
+
 export function IntelligenceView() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [signals, setSignals] = useState<IntelligenceSignal[]>([]);
-  const [sourcesById, setSourcesById] = useState<Record<string, Source>>({});
-  const [documentsById, setDocumentsById] = useState<Record<string, Document>>({});
-  const [companiesById, setCompaniesById] = useState<Record<string, Company>>({});
-  const [topicsById, setTopicsById] = useState<Record<string, Topic>>({});
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [topics, setTopics] = useState<Topic[]>([]);
+  const [sources, setSources] = useState<CatalogEntry[]>([]);
+  const [companies, setCompanies] = useState<CatalogEntry[]>([]);
+  const [topics, setTopics] = useState<CatalogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filterLoading, setFilterLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [analyzing, setAnalyzing] = useState<string | null>(null);
@@ -58,28 +76,27 @@ export function IntelligenceView() {
   const [filterSentiment, setFilterSentiment] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("priority");
 
-  async function refresh() {
+  const documentsById = useMemo(() => Object.fromEntries(documents.map((document) => [document.id, document])), [documents]);
+  const sourcesById = useMemo(() => Object.fromEntries(sources.map((source) => [source.id, source.name])), [sources]);
+  const companiesById = useMemo(() => Object.fromEntries(companies.map((company) => [company.id, company.name])), [companies]);
+  const topicsById = useMemo(() => Object.fromEntries(topics.map((topic) => [topic.id, topic.name])), [topics]);
+
+  async function bootstrap() {
     setLoading(true);
     try {
-      const [documentList, signalList, sourceList, companyList, topicList, systemInfo] = await Promise.all([
-        documentsApi.list(),
-        intelligenceApi.listSignals({
-          company_id: filterCompany || undefined,
-          topic_id: filterTopic || undefined,
-          signal_type: (filterSignalType || undefined) as SignalType | undefined,
-          sentiment: (filterSentiment || undefined) as Sentiment | undefined,
-        }),
-        sourcesApi.list(), companiesApi.list(), topicsApi.list(), getSystemInfo(),
-      ]);
-      setDocuments(documentList.items);
-      setSignals(signalList.items);
-      setSourcesById(Object.fromEntries(sourceList.items.map((source) => [source.id, source])));
-      setDocumentsById(Object.fromEntries(documentList.items.map((document) => [document.id, document])));
-      setCompanies(companyList.items);
-      setTopics(topicList.items);
-      setCompaniesById(Object.fromEntries(companyList.items.map((company) => [company.id, company])));
-      setTopicsById(Object.fromEntries(topicList.items.map((topic) => [topic.id, topic])));
-      setIsMock(systemInfo.llm_provider === "mock");
+      let data: IntelligenceBootstrapResponse;
+      try {
+        data = await intelligenceApi.bootstrap();
+      } catch (cause) {
+        if (cause instanceof ApiError && cause.status === 404) data = await loadLegacyBootstrap();
+        else throw cause;
+      }
+      setDocuments(data.documents);
+      setSignals(data.signals);
+      setSources(data.sources);
+      setCompanies(data.companies);
+      setTopics(data.topics);
+      setIsMock(data.providers.llm_provider === "mock");
       setError("");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not load intelligence data.");
@@ -87,7 +104,81 @@ export function IntelligenceView() {
       setLoading(false);
     }
   }
-  useEffect(() => { void refresh(); }, [filterCompany, filterTopic, filterSignalType, filterSentiment]);
+  useEffect(() => { void bootstrap(); }, []);
+
+  // Filter changes must reload only the signal collection -- documents/catalogs/providers
+  // stay untouched. The ref skips this effect's initial mount run since bootstrap() above
+  // already supplies the unfiltered signal list; only real filter changes after that
+  // should trigger GET /intelligence/signals again.
+  const skipInitialFilterReload = useRef(true);
+  // Guards against out-of-order filter responses: rapid filter changes can fire overlapping
+  // requests, and a slower older one must never overwrite a newer filter's result. Only the
+  // response whose sequence number still matches the latest dispatched request may commit.
+  const filterRequestSeq = useRef(0);
+  // An action's own result is authoritative over any in-flight filter reload. Superseding
+  // that request must also clear its loading state -- the stale request's finally block
+  // deliberately won't, since its sequence no longer matches.
+  function invalidateFilterRequest() {
+    filterRequestSeq.current += 1;
+    setFilterLoading(false);
+  }
+  async function reloadSignals() {
+    const seq = ++filterRequestSeq.current;
+    setFilterLoading(true); setError("");
+    try {
+      const result = await intelligenceApi.listSignals({
+        company_id: filterCompany || undefined,
+        topic_id: filterTopic || undefined,
+        signal_type: (filterSignalType || undefined) as SignalType | undefined,
+        sentiment: (filterSentiment || undefined) as Sentiment | undefined,
+      });
+      if (seq !== filterRequestSeq.current) return; // superseded by a newer filter change
+      setSignals(result.items);
+    } catch (cause) {
+      if (seq !== filterRequestSeq.current) return;
+      setError(cause instanceof ApiError ? cause.message : "Could not load intelligence signals.");
+    } finally {
+      if (seq === filterRequestSeq.current) setFilterLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (skipInitialFilterReload.current) { skipInitialFilterReload.current = false; return; }
+    void reloadSignals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterCompany, filterTopic, filterSignalType, filterSentiment]);
+
+  function matchesActiveFilters(signal: IntelligenceSignal): boolean {
+    if (filterCompany && signal.company_id !== filterCompany) return false;
+    if (filterTopic && signal.topic_id !== filterTopic) return false;
+    if (filterSignalType && signal.signal_type !== filterSignalType) return false;
+    if (filterSentiment && signal.sentiment !== filterSentiment) return false;
+    return true;
+  }
+
+  function upsertSignals(returned: IntelligenceSignal[]) {
+    invalidateFilterRequest();
+    setSignals((prev) => {
+      const byId = new Map(prev.map((signal) => [signal.id, signal]));
+      for (const signal of returned) {
+        if (signal.analysis_status === "completed" && matchesActiveFilters(signal)) byId.set(signal.id, signal);
+        else byId.delete(signal.id); // re-analysis turned it irrelevant/failed, or it no longer matches filters
+      }
+      return [...byId.values()];
+    });
+  }
+
+  function patchDocumentsAnalysis(returned: IntelligenceSignal[]) {
+    const byDocumentId = new Map(returned.map((signal) => [signal.document_id, signal]));
+    setDocuments((prev) => prev.map((document) => {
+      const signal = byDocumentId.get(document.id);
+      return signal ? { ...document, analysis_status: signal.analysis_status, signal_id: signal.id } : document;
+    }));
+  }
+
+  function patchDocumentsIndexed(results: IndexResult[]) {
+    const indexedIds = new Set(results.map((result) => result.document_id));
+    setDocuments((prev) => prev.map((document) => (indexedIds.has(document.id) ? { ...document, indexed: true } : document)));
+  }
 
   const sortedSignals = [...signals].sort((a, b) =>
     sortMode === "recent" ? b.analyzed_at.localeCompare(a.analyzed_at) : b.importance_score - a.importance_score,
@@ -96,9 +187,10 @@ export function IntelligenceView() {
   async function analyzeDocument(document: Document) {
     setAnalyzing(document.id); setError("");
     try {
-      await documentsApi.analyze(document.id, document.analysis_status != null);
+      const signal = await documentsApi.analyze(document.id, document.analysis_status != null);
+      patchDocumentsAnalysis([signal]);
+      upsertSignals([signal]);
       setNotice(`Analysis complete for "${document.title ?? "document"}".`);
-      await refresh();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not analyze document.");
     } finally {
@@ -110,8 +202,9 @@ export function IntelligenceView() {
     setAnalyzingPending(true); setError("");
     try {
       const result = await intelligenceApi.analyzePending(5);
+      patchDocumentsAnalysis(result.signals);
+      upsertSignals(result.signals);
       setNotice(`Analyzed ${result.analyzed} pending document${result.analyzed === 1 ? "" : "s"}.`);
-      await refresh();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not analyze pending documents.");
     } finally {
@@ -123,12 +216,12 @@ export function IntelligenceView() {
     setIndexing(document.id); setError("");
     try {
       const result = await documentsApi.index(document.id, document.indexed);
+      patchDocumentsIndexed([result]);
       setNotice(
         result.skipped
           ? `"${document.title ?? "Document"}" is already indexed (${result.total_chunks} chunks).`
           : `Indexed "${document.title ?? "document"}" into ${result.chunks_created} chunks.`,
       );
-      await refresh();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not index document.");
     } finally {
@@ -140,8 +233,8 @@ export function IntelligenceView() {
     setIndexingPending(true); setError("");
     try {
       const result = await searchApi.indexPending(5);
+      patchDocumentsIndexed(result.results);
       setNotice(`Indexed ${result.indexed} pending document${result.indexed === 1 ? "" : "s"} for search.`);
-      await refresh();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not index pending documents.");
     } finally {
@@ -176,23 +269,28 @@ export function IntelligenceView() {
       <section className="intelligence-section">
         <div className="intelligence-section-heading">
           <h2>Analyzed Intelligence</h2>
-          {isMock && <span className="mock-badge">Mock AI — no real model was called</span>}
+          <div className="row-actions">
+            {filterLoading && sortedSignals.length > 0 && (
+              <span className="panel-footnote" role="status"><RefreshCw size={12} className="spin-icon" /> Updating results…</span>
+            )}
+            {isMock && <span className="mock-badge">Mock AI — no real model was called</span>}
+          </div>
         </div>
 
         <div className="filter-bar">
-          <select value={filterCompany} onChange={(event) => setFilterCompany(event.target.value)} aria-label="Filter by company">
+          <select value={filterCompany} disabled={loading} onChange={(event) => setFilterCompany(event.target.value)} aria-label="Filter by company">
             <option value="">All companies</option>
             {companies.map((company) => <option value={company.id} key={company.id}>{company.name}</option>)}
           </select>
-          <select value={filterTopic} onChange={(event) => setFilterTopic(event.target.value)} aria-label="Filter by topic">
+          <select value={filterTopic} disabled={loading} onChange={(event) => setFilterTopic(event.target.value)} aria-label="Filter by topic">
             <option value="">All topics</option>
             {topics.map((topic) => <option value={topic.id} key={topic.id}>{topic.name}</option>)}
           </select>
-          <select value={filterSignalType} onChange={(event) => setFilterSignalType(event.target.value)} aria-label="Filter by signal type">
+          <select value={filterSignalType} disabled={loading} onChange={(event) => setFilterSignalType(event.target.value)} aria-label="Filter by signal type">
             <option value="">All signal types</option>
             {SIGNAL_TYPE_OPTIONS.map((type) => <option value={type} key={type}>{SIGNAL_TYPE_LABELS[type]}</option>)}
           </select>
-          <select value={filterSentiment} onChange={(event) => setFilterSentiment(event.target.value)} aria-label="Filter by sentiment">
+          <select value={filterSentiment} disabled={loading} onChange={(event) => setFilterSentiment(event.target.value)} aria-label="Filter by sentiment">
             <option value="">All sentiment</option>
             {SENTIMENT_OPTIONS.map((sentiment) => <option value={sentiment} key={sentiment}>{sentiment}</option>)}
           </select>
@@ -202,17 +300,17 @@ export function IntelligenceView() {
           </div>
         </div>
 
-        {loading ? (
+        {loading || (filterLoading && sortedSignals.length === 0) ? (
           <CardGridSkeleton label="Loading analyzed intelligence" />
         ) : sortedSignals.length === 0 ? (
           <div className="empty-surface"><h2>No intelligence yet</h2><p>Analyze a collected document below to generate a structured signal, or clear your filters.</p></div>
         ) : (
-          <div className="signal-card-grid content-fade-in">
+          <div className="signal-card-grid content-fade-in" aria-busy={filterLoading}>
             {sortedSignals.map((signal) => {
               const document = documentsById[signal.document_id];
-              const source = document ? sourcesById[document.source_id] : undefined;
-              const company = signal.company_id ? companiesById[signal.company_id] : undefined;
-              const topic = signal.topic_id ? topicsById[signal.topic_id] : undefined;
+              const sourceName = document ? sourcesById[document.source_id] : undefined;
+              const companyName = signal.company_id ? companiesById[signal.company_id] : undefined;
+              const topicName = signal.topic_id ? topicsById[signal.topic_id] : undefined;
               return (
                 <button className="signal-card" key={signal.id} onClick={() => setDetail(signal)}>
                   <div className="signal-card-heading">
@@ -221,14 +319,14 @@ export function IntelligenceView() {
                   </div>
                   <h3>{signal.title}</h3>
                   <p>{signal.executive_summary}</p>
-                  {(company || topic) && (
+                  {(companyName || topicName) && (
                     <div className="entity-chips">
-                      {company && <span className="entity-chip">{company.name}</span>}
-                      {topic && <span className="entity-chip">{topic.name}</span>}
+                      {companyName && <span className="entity-chip">{companyName}</span>}
+                      {topicName && <span className="entity-chip">{topicName}</span>}
                     </div>
                   )}
                   <div className="signal-card-meta">
-                    <span>{source?.name ?? "Unknown source"}</span>
+                    <span>{sourceName ?? "Unknown source"}</span>
                     <span>Importance {Math.round(signal.importance_score * 100)}%</span>
                     <span>Relevance {Math.round(signal.relevance_score * 100)}%</span>
                   </div>
@@ -257,7 +355,7 @@ export function IntelligenceView() {
                   </a>
                 </div>
                 <div className="document-meta">
-                  <span>{sourcesById[document.source_id]?.name ?? "Unknown source"}</span>
+                  <span>{sourcesById[document.source_id] ?? "Unknown source"}</span>
                   <span>Published {formatDate(document.published_at)}</span>
                   <span>Fetched {formatDate(document.fetched_at)}</span>
                 </div>
@@ -300,9 +398,9 @@ export function IntelligenceView() {
         <SignalDetailDialog
           signal={detail}
           document={documentsById[detail.document_id]}
-          source={documentsById[detail.document_id] ? sourcesById[documentsById[detail.document_id].source_id] : undefined}
-          company={detail.company_id ? companiesById[detail.company_id] : undefined}
-          topic={detail.topic_id ? topicsById[detail.topic_id] : undefined}
+          sourceName={documentsById[detail.document_id] ? sourcesById[documentsById[detail.document_id].source_id] : undefined}
+          companyName={detail.company_id ? companiesById[detail.company_id] : undefined}
+          topicName={detail.topic_id ? topicsById[detail.topic_id] : undefined}
           isMock={isMock}
           onClose={() => setDetail(null)}
         />
@@ -319,9 +417,9 @@ function DocumentAnalysisStatus({ status }: { status: Document["analysis_status"
 }
 
 function SignalDetailDialog({
-  signal, document, source, company, topic, isMock, onClose,
+  signal, document, sourceName, companyName, topicName, isMock, onClose,
 }: {
-  signal: IntelligenceSignal; document?: Document; source?: Source; company?: Company; topic?: Topic;
+  signal: IntelligenceSignal; document?: Document; sourceName?: string; companyName?: string; topicName?: string;
   isMock: boolean; onClose: () => void;
 }) {
   const askQuestion = `Tell me more about "${signal.title ?? "this signal"}" and why it matters.`;
@@ -332,10 +430,10 @@ function SignalDetailDialog({
           <div>
             <span className="section-kicker">{SIGNAL_TYPE_LABELS[signal.signal_type ?? "other"]}{isMock ? " · MOCK AI" : ""}</span>
             <h2 id="signal-detail-title">{signal.title}</h2>
-            {(company || topic) && (
+            {(companyName || topicName) && (
               <div className="entity-chips">
-                {company && <span className="entity-chip">{company.name}</span>}
-                {topic && <span className="entity-chip">{topic.name}</span>}
+                {companyName && <span className="entity-chip">{companyName}</span>}
+                {topicName && <span className="entity-chip">{topicName}</span>}
               </div>
             )}
           </div>
@@ -370,7 +468,7 @@ function SignalDetailDialog({
             </Link>
             {document && (
               <a className="external-source" href={document.canonical_url} target="_blank" rel="noopener noreferrer">
-                Original source{source ? ` (${source.name})` : ""} <ExternalLink size={12} />
+                Original source{sourceName ? ` (${sourceName})` : ""} <ExternalLink size={12} />
               </a>
             )}
           </div>

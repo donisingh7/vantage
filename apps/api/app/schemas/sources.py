@@ -4,6 +4,7 @@ from pydantic import AnyHttpUrl, BaseModel, Field, field_validator
 
 from app.models import IngestionInterval, SourceType
 from app.schemas.common import EntityBase
+from app.schemas.ingestion import CrawlJobRead
 from app.schemas.normalizers import normalize_text
 from app.services.url_safety import UnsafeUrlError, ensure_safe_url
 
@@ -85,3 +86,20 @@ class SourceRead(EntityBase):
     is_active: bool
     ingestion_interval: IngestionInterval
     watchlist_count: int = 0
+
+
+class SourceManagementRead(SourceRead):
+    """SourceRead plus this source's own latest ingestion job, for the Sources management
+    page's single-request read (GET /sources/management) instead of a separate
+    GET /sources + GET /ingestion/jobs pair."""
+
+    latest_job: CrawlJobRead | None = None
+
+
+class SourcesManagementResponse(BaseModel):
+    items: list[SourceManagementRead]
+    total: int
+    # Whether the running application will execute ingestion automatically. Production
+    # currently has ENABLE_SCHEDULER=false, so the UI must not present a calculated
+    # "next run" as if a scheduler will actually fire it.
+    scheduler_enabled: bool

@@ -4,7 +4,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.models import AnalysisStatus, Sentiment, SignalType
-from app.schemas.common import EntityBase
+from app.schemas.common import CatalogEntryRead, EntityBase, ProviderInfo
+from app.schemas.ingestion import DocumentRead
 
 
 class IntelligenceSignalRead(EntityBase):
@@ -33,3 +34,18 @@ class AnalyzePendingRequest(BaseModel):
 class AnalyzePendingResult(BaseModel):
     analyzed: int
     signals: list[IntelligenceSignalRead]
+
+
+class IntelligenceBootstrapResponse(BaseModel):
+    """Everything the Intelligence page needs for its first render, in one request.
+
+    After this, a filter change should only ever call GET /intelligence/signals?... again
+    -- never re-fetch documents/sources/companies/topics/providers.
+    """
+
+    providers: ProviderInfo
+    documents: list[DocumentRead]
+    signals: list[IntelligenceSignalRead]
+    sources: list[CatalogEntryRead]
+    companies: list[CatalogEntryRead]
+    topics: list[CatalogEntryRead]

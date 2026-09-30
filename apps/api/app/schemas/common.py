@@ -19,3 +19,21 @@ class EntityBase(BaseModel):
     workspace_id: UUID
     created_at: datetime
     updated_at: datetime
+
+
+class ProviderInfo(BaseModel):
+    llm_provider: str
+    embedding_provider: str
+
+
+class CatalogEntryRead(BaseModel):
+    """Narrow id+name projection for filter dropdowns/lookup maps -- never the full entity."""
+
+    id: UUID
+    name: str
+
+
+class CatalogSourceRead(BaseModel):
+    id: UUID
+    name: str
+    url: str
