@@ -1,12 +1,17 @@
-"""Tests for GET /api/v1/watchlists/bootstrap -- one request replacing
+"""Tests for GET /api/v1/watchlists/bootstrap/initial -- one request replacing
 Promise.all(GET /watchlists, GET /companies, GET /topics, GET /sources) plus a separate
 GET /watchlists/{id} for the initially-selected watchlist.
+
+The path is deliberately two segments (see the route's docstring): a single-segment
+/watchlists/bootstrap would collide with the pre-Pass-3 GET /watchlists/{watchlist_id}
+route and fail UUID validation with a 422 instead of a genuine 404, breaking the
+frontend's 404-only rollout fallback.
 """
 API = "/api/v1"
 
 
 async def test_empty_workspace_returns_empty_lists_and_null_detail(client):
-    response = await client.get(f"{API}/watchlists/bootstrap")
+    response = await client.get(f"{API}/watchlists/bootstrap/initial")
     assert response.status_code == 200
     body = response.json()
     assert body["watchlists"] == []
@@ -21,7 +26,7 @@ async def test_catalogs_return_narrow_projections(client):
     await client.post(f"{API}/topics", json={"name": "Cloud"})
     await client.post(f"{API}/sources", json={"name": "Feed", "url": "https://example.com/feed", "source_type": "website"})
 
-    response = await client.get(f"{API}/watchlists/bootstrap")
+    response = await client.get(f"{API}/watchlists/bootstrap/initial")
     body = response.json()
 
     assert body["companies"] == [{"id": body["companies"][0]["id"], "name": "Acme"}]
@@ -34,7 +39,7 @@ async def test_initial_detail_matches_the_first_alphabetical_watchlist(client):
     await client.post(f"{API}/watchlists", json={"name": "Zebra watchlist"})
     alpha = (await client.post(f"{API}/watchlists", json={"name": "Alpha watchlist"})).json()
 
-    response = await client.get(f"{API}/watchlists/bootstrap")
+    response = await client.get(f"{API}/watchlists/bootstrap/initial")
     body = response.json()
     assert body["watchlists"][0]["name"] == "Alpha watchlist"
     assert body["initial_detail"]["id"] == alpha["id"]
@@ -48,7 +53,7 @@ async def test_initial_detail_reflects_membership_counts(client):
     await client.put(f"{API}/watchlists/{watchlist['id']}/companies/{company['id']}")
     await client.put(f"{API}/watchlists/{watchlist['id']}/topics/{topic['id']}")
 
-    response = await client.get(f"{API}/watchlists/bootstrap")
+    response = await client.get(f"{API}/watchlists/bootstrap/initial")
     detail = response.json()["initial_detail"]
     assert detail["counts"] == {"companies": 1, "topics": 1, "sources": 0}
     assert [item["name"] for item in detail["companies"]] == ["Acme"]
@@ -66,7 +71,7 @@ async def test_watchlist_bootstrap_never_leaks_another_workspaces_data(client, s
         session.add(foreign_watchlist)
         await session.commit()
 
-    response = await client.get(f"{API}/watchlists/bootstrap")
+    response = await client.get(f"{API}/watchlists/bootstrap/initial")
     body = response.json()
     assert body["watchlists"] == []
     assert body["companies"] == []

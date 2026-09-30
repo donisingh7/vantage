@@ -42,7 +42,9 @@ function computeNextRun(job: CrawlJob | null | undefined, interval: IngestionInt
 }
 
 // -- DEPLOYMENT-TRANSITION COMPATIBILITY (temporary) --------------------------------
-// Only used when GET /sources/management genuinely 404s (old Lambda, new frontend).
+// Only used when GET /sources/management/view genuinely 404s (old Lambda, new frontend).
+// (Two path segments deliberately -- a single-segment /sources/management would collide
+// with the pre-Pass-3 GET /sources/{source_id} route and 422 instead of 404 on an old Lambda.)
 // Reconstructs the same shape from the two legacy calls it replaces. Since the old
 // backend never exposed whether the scheduler is actually enabled, this defaults to
 // false (matching current production config) rather than overclaiming automation.
@@ -113,6 +115,9 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
   const [busy, setBusy] = useState(false);
   const [ingesting, setIngesting] = useState<string | null>(null);
   const [viewingEntity, setViewingEntity] = useState<Company | Topic | null>(null);
+  // True only while a background search reconciliation (see reconcileWithSearch) is in
+  // flight -- distinct from `loading`, which is the initial/full-page skeleton state.
+  const [reconciling, setReconciling] = useState(false);
 
   async function refresh(query = search) {
     setLoading(true);
@@ -126,6 +131,23 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
     finally { setLoading(false); }
   }
   useEffect(() => { void refresh(""); }, [kind]);
+
+  // A create/edit can change whether a record belongs in the CURRENT filtered (searched)
+  // result set -- e.g. editing "Acme" to "Beta" while searching "Acme" should make it
+  // disappear, and creating "Beta" while searching "Acme" should never show it. Rather than
+  // duplicate the backend's per-kind search fields (name+domain for companies, name only
+  // for topics, name+url for sources) in the frontend, this re-reads the current resource
+  // endpoint with the current search term -- one targeted request, no full-page skeleton,
+  // existing table stays visible via the `reconciling` busy state instead.
+  async function reconcileWithSearch() {
+    setReconciling(true);
+    try {
+      const result = await load(kind, search);
+      setItems(result.items);
+      setSchedulerEnabled(result.schedulerEnabled);
+    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not refresh search results."); }
+    finally { setReconciling(false); }
+  }
 
   async function runIngestion(source: SourceManagement) {
     setIngesting(source.id); setError("");
@@ -150,7 +172,13 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
     try {
       const wasEditing = editing && editing !== null ? editing : null;
       const result = await save(kind, wasEditing ? wasEditing.id : null, values);
-      if (wasEditing) {
+      setEditing(undefined); setNotice(`${labels[kind]} ${wasEditing ? "updated" : "created"}.`);
+
+      if (search.trim()) {
+        // Create/edit can change whether this record still belongs in the active search
+        // results -- reconcile against the real backend search instead of guessing locally.
+        await reconcileWithSearch();
+      } else if (wasEditing) {
         // The update response has no enriched watchlist_count (it's not a DB column), so
         // keep the value already known locally instead of silently zeroing it; same for a
         // source's latest_job, which editing name/url/etc never changes.
@@ -161,7 +189,6 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
         const created = kind === "sources" ? { ...(result as Source), latest_job: null } : result;
         setItems((prev) => [...prev, created as RecordItem].sort((a, b) => a.name.localeCompare(b.name)));
       }
-      setEditing(undefined); setNotice(`${labels[kind]} ${wasEditing ? "updated" : "created"}.`);
     } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not save this record."); }
     finally { setSaving(false); }
   }
@@ -200,10 +227,10 @@ export function ResourceManager({ kind }: { kind: ResourceKind }) {
 
   return <section className="management-page">
     <header className="management-heading"><div><div className="eyebrow"><span className="eyebrow-rule" />WORKSPACE MANAGEMENT</div><h1>{kind[0].toUpperCase() + kind.slice(1)}</h1><p>{kind === "companies" ? "Organizations in your market map." : kind === "topics" ? "Themes shaping your strategic landscape." : "Public sources for monitoring. Run ingestion to fetch and store their latest content."}</p></div><button className="primary-button" onClick={() => openForm()}><Plus size={16} /> Add {labels[kind].toLowerCase()}</button></header>
-    <div className="management-toolbar"><label className="management-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void refresh(); }} placeholder={`Search ${kind}...`} /></label><span className="record-total">{items.length} {items.length === 1 ? "record" : "records"}</span></div>
+    <div className="management-toolbar"><label className="management-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void refresh(); }} placeholder={`Search ${kind}...`} /></label><span className="record-total" aria-live="polite">{reconciling ? <RefreshCw size={12} className="spin-icon" /> : null}{items.length} {items.length === 1 ? "record" : "records"}</span></div>
     {notice && <div className="feedback feedback-success" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice("")}><X size={14} /></button></div>}
     {error && editing === undefined && !deleting && <div className="feedback feedback-error" role="alert">{error}<button aria-label="Dismiss error" onClick={() => setError("")}><X size={14} /></button></div>}
-    {loading ? <TableSkeleton columns={RESOURCE_TABLE_COLUMNS[kind]} label={`Loading ${kind}`} /> : items.length === 0 ? <div className="empty-surface"><div className="empty-symbol"><Plus size={19} /></div><h2>{search ? "No matches found" : "A clear space to start"}</h2><p>{search ? "Try another search." : `No ${kind} yet. Add one to get started.`}</p>{!search && <button className="secondary-button" onClick={() => openForm()}>Add first {labels[kind].toLowerCase()}</button>}</div> : <div className="table-wrap content-fade-in"><table className="resource-table"><thead><tr>{(kind === "companies" ? ["Company", "Domain", "Description", "Watchlists"] : kind === "topics" ? ["Topic", "Description", "Watchlists"] : ["Source", "Type", "URL", "Watchlists", "Status", "Last ingestion", "Schedule"]).map((column) => <th key={column}>{column}</th>)}<th><span className="visually-hidden">Actions</span></th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.name}</strong></td>
+    {loading ? <TableSkeleton columns={RESOURCE_TABLE_COLUMNS[kind]} label={`Loading ${kind}`} /> : items.length === 0 ? <div className="empty-surface"><div className="empty-symbol"><Plus size={19} /></div><h2>{search ? "No matches found" : "A clear space to start"}</h2><p>{search ? "Try another search." : `No ${kind} yet. Add one to get started.`}</p>{!search && <button className="secondary-button" onClick={() => openForm()}>Add first {labels[kind].toLowerCase()}</button>}</div> : <div className="table-wrap content-fade-in" aria-busy={reconciling}><table className="resource-table"><thead><tr>{(kind === "companies" ? ["Company", "Domain", "Description", "Watchlists"] : kind === "topics" ? ["Topic", "Description", "Watchlists"] : ["Source", "Type", "URL", "Watchlists", "Status", "Last ingestion", "Schedule"]).map((column) => <th key={column}>{column}</th>)}<th><span className="visually-hidden">Actions</span></th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.name}</strong></td>
       {kind === "companies" && <><td className="muted-cell">{(item as Company).domain || "—"}</td><td className="description-cell">{(item as Company).description || "—"}</td><td><span className="count-tag">{item.watchlist_count}</span></td></>}
       {kind === "topics" && <><td className="description-cell">{(item as Topic).description || "—"}</td><td><span className="count-tag">{item.watchlist_count}</span></td></>}
       {kind === "sources" && <><td><span className="type-tag">{(item as SourceManagement).source_type}</span></td><td><a className="external-source" href={(item as SourceManagement).url} target="_blank" rel="noopener noreferrer">{(item as SourceManagement).url}<ExternalLink size={12} /></a></td><td><span className="count-tag">{item.watchlist_count}</span></td><td><button className={`status-toggle ${(item as SourceManagement).is_active ? "status-on" : "status-off"}`} disabled={busy} onClick={() => void toggleSource(item as SourceManagement)}><span />{(item as SourceManagement).is_active ? "Active" : "Paused"}</button></td><td><IngestionStatus job={(item as SourceManagement).latest_job} /></td><td><ScheduleCell source={item as SourceManagement} job={(item as SourceManagement).latest_job} schedulerEnabled={schedulerEnabled} /></td></>}

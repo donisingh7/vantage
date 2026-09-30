@@ -215,7 +215,7 @@ export const topicsApi = {
 
 export const sourcesApi = {
   list: (search?: string) => request<ListResponse<Source>>(queryPath("/api/v1/sources", search)),
-  management: (search?: string) => request<SourcesManagementResponse>(queryPath("/api/v1/sources/management", search)),
+  management: (search?: string) => request<SourcesManagementResponse>(queryPath("/api/v1/sources/management/view", search)),
   get: (id: string) => request<Source>(`/api/v1/sources/${id}`),
   create: (data: { name: string; url: string; source_type: SourceType; is_active?: boolean; ingestion_interval?: IngestionInterval }) =>
     request<Source>("/api/v1/sources", { method: "POST", body: jsonBody(data) }),
@@ -225,7 +225,7 @@ export const sourcesApi = {
 };
 
 export const watchlistsApi = {
-  bootstrap: () => request<WatchlistBootstrapResponse>("/api/v1/watchlists/bootstrap"),
+  bootstrap: () => request<WatchlistBootstrapResponse>("/api/v1/watchlists/bootstrap/initial"),
   list: (search?: string) => request<ListResponse<Watchlist>>(queryPath("/api/v1/watchlists", search)),
   listContaining: (params: { company_id?: string; topic_id?: string }) => {
     const query = new URLSearchParams();

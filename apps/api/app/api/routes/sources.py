@@ -19,7 +19,7 @@ from app.schemas.sources import (
 router = APIRouter(prefix="/sources", tags=["sources"])
 
 
-@router.get("/management", response_model=SourcesManagementResponse)
+@router.get("/management/view", response_model=SourcesManagementResponse)
 async def read_sources_management(
     service: SourceManagementServiceDep,
     counts_service: SourceServiceDep,
@@ -27,7 +27,16 @@ async def read_sources_management(
     search: str | None = Query(default=None, max_length=200),
 ) -> SourcesManagementResponse:
     """Each source plus its own latest ingestion job, in one request -- replaces
-    GET /sources followed by GET /ingestion/jobs (full job history) for the Sources page."""
+    GET /sources followed by GET /ingestion/jobs (full job history) for the Sources page.
+
+    Deliberately two path segments (/management/view, not /management): a pre-Pass-3 Lambda
+    already has GET /sources/{source_id} with a UUID-typed path param. A single-segment
+    /sources/management would match that route's URL shape first and fail UUID validation
+    with a 422, not a 404 -- breaking the frontend's 404-only rollout fallback during the
+    window between this frontend deploying (automatic) and the Lambda deploying (manual).
+    Two segments can never match a one-segment dynamic route, so an old Lambda genuinely has
+    no route for this path and returns a real 404.
+    """
     rows = await service.list_with_latest_job(search)
     counts = await counts_service.watchlist_counts([source.id for source, _ in rows])
     items = [

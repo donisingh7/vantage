@@ -1,5 +1,10 @@
-"""Tests for GET /api/v1/sources/management -- one request replacing GET /sources +
+"""Tests for GET /api/v1/sources/management/view -- one request replacing GET /sources +
 GET /ingestion/jobs (full job history) for the Sources management page.
+
+The path is deliberately two segments (see the route's docstring): a single-segment
+/sources/management would collide with the pre-Pass-3 GET /sources/{source_id} route and
+fail UUID validation with a 422 instead of a genuine 404, breaking the frontend's
+404-only rollout fallback.
 """
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -33,7 +38,7 @@ async def _insert_job(sessions, *, workspace_id, source_id, created_at, status=C
 
 
 async def test_empty_workspace_returns_no_items(client):
-    response = await client.get(f"{API}/sources/management")
+    response = await client.get(f"{API}/sources/management/view")
     assert response.status_code == 200
     body = response.json()
     assert body["items"] == []
@@ -42,7 +47,7 @@ async def test_empty_workspace_returns_no_items(client):
 
 async def test_source_with_no_jobs_has_null_latest_job(client):
     await _create_source(client)
-    response = await client.get(f"{API}/sources/management")
+    response = await client.get(f"{API}/sources/management/view")
     items = response.json()["items"]
     assert len(items) == 1
     assert items[0]["latest_job"] is None
@@ -62,7 +67,7 @@ async def test_newer_job_is_selected_over_older_job(client, sessions):
         created_at=now, status=CrawlJobStatus.FAILED, error_message="timed out",
     )
 
-    response = await client.get(f"{API}/sources/management")
+    response = await client.get(f"{API}/sources/management/view")
     items = response.json()["items"]
     assert len(items) == 1
     latest_job = items[0]["latest_job"]
@@ -84,14 +89,14 @@ async def test_response_does_not_leak_full_job_history(client, sessions):
             sessions, workspace_id=workspace_id, source_id=UUID(source["id"]), created_at=now - timedelta(hours=offset)
         )
 
-    response = await client.get(f"{API}/sources/management")
+    response = await client.get(f"{API}/sources/management/view")
     body = response.json()
     assert len(body["items"]) == 1  # one row per source, not one row per job
     assert "jobs" not in body["items"][0]  # no embedded job-history array
 
 
 async def test_scheduler_enabled_reflects_settings(client):
-    response = await client.get(f"{API}/sources/management")
+    response = await client.get(f"{API}/sources/management/view")
     # IsolatedTestSettings() reads only field defaults; Settings.enable_scheduler defaults False,
     # matching production's ENABLE_SCHEDULER=false.
     assert response.json()["scheduler_enabled"] is False
@@ -102,7 +107,7 @@ async def test_watchlist_count_reflects_membership(client):
     watchlist = (await client.post(f"{API}/watchlists", json={"name": "W1"})).json()
     await client.put(f"{API}/watchlists/{watchlist['id']}/sources/{source['id']}")
 
-    response = await client.get(f"{API}/sources/management")
+    response = await client.get(f"{API}/sources/management/view")
     items = response.json()["items"]
     assert items[0]["watchlist_count"] == 1
 
@@ -123,6 +128,6 @@ async def test_source_management_never_leaks_another_workspaces_data(client, ses
         ))
         await session.commit()
 
-    response = await client.get(f"{API}/sources/management")
+    response = await client.get(f"{API}/sources/management/view")
     assert response.status_code == 200
     assert response.json()["items"] == []

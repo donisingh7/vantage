@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, Layers, MessageSquareText, Sparkles, X } from "lucide-react";
+import { ExternalLink, Layers, MessageSquareText, RefreshCw, Sparkles, X } from "lucide-react";
 import {
   ApiError, companiesApi, documentsApi, getSystemInfo, intelligenceApi, searchApi, sourcesApi, topicsApi,
   type CatalogEntry, type Document, type IndexResult, type IntelligenceBootstrapResponse, type IntelligenceSignal,
@@ -111,7 +111,12 @@ export function IntelligenceView() {
   // already supplies the unfiltered signal list; only real filter changes after that
   // should trigger GET /intelligence/signals again.
   const skipInitialFilterReload = useRef(true);
+  // Guards against out-of-order filter responses: rapid filter changes can fire overlapping
+  // requests, and a slower older one must never overwrite a newer filter's result. Only the
+  // response whose sequence number still matches the latest dispatched request may commit.
+  const filterRequestSeq = useRef(0);
   async function reloadSignals() {
+    const seq = ++filterRequestSeq.current;
     setFilterLoading(true); setError("");
     try {
       const result = await intelligenceApi.listSignals({
@@ -120,11 +125,13 @@ export function IntelligenceView() {
         signal_type: (filterSignalType || undefined) as SignalType | undefined,
         sentiment: (filterSentiment || undefined) as Sentiment | undefined,
       });
+      if (seq !== filterRequestSeq.current) return; // superseded by a newer filter change
       setSignals(result.items);
     } catch (cause) {
+      if (seq !== filterRequestSeq.current) return;
       setError(cause instanceof ApiError ? cause.message : "Could not load intelligence signals.");
     } finally {
-      setFilterLoading(false);
+      if (seq === filterRequestSeq.current) setFilterLoading(false);
     }
   }
   useEffect(() => {
@@ -142,6 +149,7 @@ export function IntelligenceView() {
   }
 
   function upsertSignals(returned: IntelligenceSignal[]) {
+    filterRequestSeq.current += 1; // an action's own result is authoritative over any in-flight filter reload
     setSignals((prev) => {
       const byId = new Map(prev.map((signal) => [signal.id, signal]));
       for (const signal of returned) {
@@ -254,7 +262,12 @@ export function IntelligenceView() {
       <section className="intelligence-section">
         <div className="intelligence-section-heading">
           <h2>Analyzed Intelligence</h2>
-          {isMock && <span className="mock-badge">Mock AI — no real model was called</span>}
+          <div className="row-actions">
+            {filterLoading && sortedSignals.length > 0 && (
+              <span className="panel-footnote" role="status"><RefreshCw size={12} className="spin-icon" /> Updating results…</span>
+            )}
+            {isMock && <span className="mock-badge">Mock AI — no real model was called</span>}
+          </div>
         </div>
 
         <div className="filter-bar">
@@ -280,12 +293,12 @@ export function IntelligenceView() {
           </div>
         </div>
 
-        {loading || filterLoading ? (
+        {loading || (filterLoading && sortedSignals.length === 0) ? (
           <CardGridSkeleton label="Loading analyzed intelligence" />
         ) : sortedSignals.length === 0 ? (
           <div className="empty-surface"><h2>No intelligence yet</h2><p>Analyze a collected document below to generate a structured signal, or clear your filters.</p></div>
         ) : (
-          <div className="signal-card-grid content-fade-in">
+          <div className="signal-card-grid content-fade-in" aria-busy={filterLoading}>
             {sortedSignals.map((signal) => {
               const document = documentsById[signal.document_id];
               const sourceName = document ? sourcesById[document.source_id] : undefined;
